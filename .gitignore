@@ -1,0 +1,19 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE / Editor
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# System files
+*.DS_Store
+.thumbs
+
+# 3D Assets (optional - 올리고 싶으면 주석 처리)
+*.fbx
+*.usd

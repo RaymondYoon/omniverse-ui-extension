@@ -1,0 +1,19 @@
+[package]
+title = "Platform UI"
+version = "1.0.0"
+description = "Simple test extension for UI in Omniverse Kit"
+category = "Custom"
+
+[dependencies]
+"omni.ui" = {}
+"omni.kit.uiapp" = {}
+"omni.kit.pipapi" = {} 
+
+[python.pipapi]
+use_online_index = true             # 인터넷 가능할 때
+requirements = ["requests>=2.31,<3"]
+modules = ["requests"]
+
+[python]
+[[python.module]]
+name = "ui_code"

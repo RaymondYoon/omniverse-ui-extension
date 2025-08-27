@@ -1,7 +1,7 @@
 from typing import Callable, Optional, Dict, Any
 import omni.ui as ui
 
-from .common import _fill, ASSET_DIR, _fmt_status, _fmt_lift
+from ui_code.ui.utils.common import _fill, ASSET_DIR, _fmt_status, _fmt_lift  # 절대 임포트
 
 class AmrCard:
     def __init__(self, parent_vstack: ui.VStack, amr_id: str, on_plus: Optional[Callable]=None):

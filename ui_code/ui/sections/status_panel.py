@@ -1,6 +1,6 @@
 # status_panel.py
 import omni.ui as ui
-from .common import _fill
+from ui_code.ui.utils.common import _fill
 
 _FIELD_STYLE = {
     "color": 0xFFFFFFFF,

@@ -6,9 +6,9 @@ __all__ = ["_fill", "ASSET_DIR", "_file_uri", "_fmt_status", "_fmt_lift"]
 def _fill():
     return ui.Fraction(1)
 
-# 이 파일 경로: platform_ext/ui_code/ui/common.py
+# 이 파일 경로: platform_ext/ui_code/ui/utils/common.py
 # resource 폴더: platform_ext/resource
-ASSET_DIR = Path(__file__).resolve().parents[2] / "resource"
+ASSET_DIR = Path(__file__).resolve().parents[3] / "resource"
 
 def _file_uri(p: Path) -> str:
     posix = p.resolve().as_posix()

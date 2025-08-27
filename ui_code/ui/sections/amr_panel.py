@@ -1,6 +1,6 @@
 # amr_panel.py
 import omni.ui as ui
-from .common import _fill
+from ui_code.ui.utils.common import _fill
 
 def build_amr_panel(self):
     # AMR 카드 컨테이너 윈도우 + 스택 준비

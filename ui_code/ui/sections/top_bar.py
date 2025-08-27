@@ -1,6 +1,6 @@
 # top_bar.py
 import omni.ui as ui
-from .common import _fill
+from ui_code.ui.utils.common import _fill
 
 def build_top_bar(self):
     self._top_win = ui.Window(

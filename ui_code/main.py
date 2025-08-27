@@ -1,4 +1,5 @@
 # main.py — UI 전용 (IExt 상속 금지, ErrorLog FIFO 로직 포함)
+
 import time
 from pathlib import Path
 
@@ -6,10 +7,18 @@ import omni.ui as ui
 from omni.ui import dock_window_in_window, DockPosition
 import omni.usd
 
+# ✅ 상대 임포트 (extension.toml의 [python.module] = "platform_ext" 기준)
 from ui_code.ui.common import _fill
 from ui_code.ui.amr_card import AmrCard
 from ui_code.Container.container_panel import ContainerPanel
 from ui_code.Mission.mission_panel import MissionPanel
+
+# 화면 구성 파트 분리
+from ui_code.ui.top_bar import build_top_bar
+from ui_code.ui.amr_panel import build_amr_panel
+from ui_code.ui.status_panel import build_status_panel
+from ui_code.ui.bottom_bar import build_bottom_bar
+
 
 class UiLayoutBase:
     # ───────────────────────── helpers ─────────────────────────
@@ -44,6 +53,8 @@ class UiLayoutBase:
     # ───────────────────────── lifecycle ───────────────────────
     def on_startup(self, ext_id):
         print("[Platform.ui.main] UI startup")
+
+        # 외부 패널 핸들
         self._container_panel = ContainerPanel()
         self._mission_panel = MissionPanel()
 
@@ -51,21 +62,15 @@ class UiLayoutBase:
         for t in ["Meta Factory v3.0", "AMR Information", "Status Panel", "Bottom Bar"]:
             self._kill_window(t)
 
-        # 상태 불릿(●/? 아이콘) 보관
+        # 상태/모델 초기화
         self._status_bullets = {}
-
-        # 에러 로그 상태값
         self._err_merge_sec = 20.0
         self._err_last = None
-               # last_time/count 초기화
         self._err_last_time = 0.0
         self._err_last_count = 0
-
-        # ErrorLog 모델/라벨 컨테이너
         self._error_models = []
         self._error_vstack = None
 
-        # 동적 텍스트 모델
         self.m_amr_running = ui.SimpleStringModel("0 Running")
         self.m_amr_waiting = ui.SimpleStringModel("0 Waiting")
         self.m_pallet_total = ui.SimpleStringModel("Total: 0")
@@ -73,168 +78,29 @@ class UiLayoutBase:
         self.m_mission_reserved = ui.SimpleStringModel("Reserved: 0")
         self.m_mission_inprogress = ui.SimpleStringModel("In Progress: 0")
 
-        field_style = {
-            "color": 0xFFFFFFFF,
-            "background_color": 0x00000000,
-            "border_width": 0,
-            "padding": 0,
-        }
+        # 화면 구성 (분리된 빌더 호출)
+        build_top_bar(self)
+        build_amr_panel(self)
+        build_status_panel(self)
+        build_bottom_bar(self)
 
-        # ── Top Bar
-        self._top_win = ui.Window(
-            "Meta Factory v3.0",
-            width=0,
-            height=40,
-            style={"background_color": 0x000000A0},
-        )
-        with self._top_win.frame:
-            with ui.HStack(height=40, padding=10, width=_fill()):
-                ui.Spacer()
-                ui.Label(
-                    "Meta Factory v3.0",
-                    alignment=ui.Alignment.CENTER,
-                    style={"font_size": 20, "color": 0xFFFFFFFF},
-                    width=300,
-                    word_wrap=True,
-                )
-                ui.Spacer()
-
-        # ── AMR Information (동적 카드 리스트)
-        self._amr_win = ui.Window(
-            "AMR Information",
-            width=260,
-            height=800,
-            style={"background_color": 0x000000A0},
-        )
-        self._amr_cards = {}  # {amr_id: AmrCard}
-        with self._amr_win.frame:
-            with ui.ScrollingFrame(style={"background_color": 0x00000000}, height=_fill()):
-                with ui.VStack(spacing=8, width=_fill()) as v:
-                    self._amr_list_stack = v
-
-        # ── Status Panel
-        self._status_win = ui.Window(
-            "Status Panel", width=320, height=0, style={"background_color": 0x000000A0}
-        )
-        with self._status_win.frame:
-            with ui.ScrollingFrame(
-                style={"background_color": 0x000000A0}, width=_fill(), height=_fill()
-            ):
-                with ui.Frame(clip=True, width=_fill(), height=_fill()):
-                    with ui.VStack(spacing=8, padding=10, width=_fill()):
-                        ui.Label(
-                            "Equipment Status",
-                            style={"font_size": 18, "color": 0xFFFFFFFF},
-                            word_wrap=True,
-                            width=_fill(),
-                        )
-                        ui.Separator()
-
-                        # AMR Status
-                        ui.Label(
-                            "AMR Status",
-                            style={"font_size": 16, "color": 0xFFFFFFFF},
-                            word_wrap=True,
-                            width=_fill(),
-                        )
-                        self._text(self.m_amr_running, field_style)
-                        self._text(self.m_amr_waiting, field_style)
-                        ui.Separator()
-
-                        # Pallet List (제목 우측 버튼)
-                        self._section_header_with_button(
-                            "Pallet List", self._open_container_panel, btn_text="+"
-                        )
-                        self._text(self.m_pallet_total, field_style)
-                        self._text(self.m_pallet_offmap, field_style)
-                        ui.Separator()
-
-                        # Mission List (제목 우측 버튼)
-                        self._section_header_with_button(
-                            "Mission List", self._open_mission_panel, btn_text="+"
-                        )
-                        self._text(self.m_mission_reserved, field_style)
-                        self._text(self.m_mission_inprogress, field_style)
-                        ui.Separator()
-
-                        # Error Log
-                        ui.Label(
-                            "Error Log",
-                            style={"font_size": 16, "color": 0xFFFFFFFF},
-                            word_wrap=True,
-                            width=_fill(),
-                        )
-                        with ui.Frame(height=140, width=_fill()):
-                            with ui.VStack(width=_fill()) as v:
-                                self._error_vstack = v
-                        ui.Separator()
-
-                        # Connection Status
-                        ui.Label(
-                            "Connection Status",
-                            style={"font_size": 16, "color": 0xFFFFFFFF},
-                            word_wrap=True,
-                            width=_fill(),
-                        )
-                        with ui.VStack(spacing=5, width=_fill()):
-                            self._draw_status_line("Operation Server", False)
-                            self._draw_status_line("Fleet Server", False)
-                            self._draw_status_line("OPC UA", False)
-                            self._draw_status_line("Storage I/O", False)
-
-                        ui.Spacer(height=8)
-
-        # ── Bottom Bar
-        self._init_mode_state()
-
-        self._bottom_win = ui.Window(
-            "Bottom Bar", width=0, height=60, style={"background_color": 0x00000080}
-        )
-        with self._bottom_win.frame:
-            with ui.HStack(spacing=20, padding=10, width=_fill(), height=_fill()):
-                ui.Spacer()
-                ui.Button("Simulation", height=40, style={"color": 0xFFFFFFFF})
-                ui.Button("ChatBot", height=40, style={"color": 0xFFFFFFFF})
-                ui.Button("Library", height=40, style={"color": 0xFFFFFFFF})
-
-                # 텍스트 바꾸기 대신 버튼 2개를 만들어 두고 보이기/숨기기만 토글
-                self._btn_edit = ui.Button(
-                    "Tools * Edit", width=140, height=40,
-                    style={"color": 0xFFFFFFFF},
-                    clicked_fn=self._toggle_operate_mode,
-                )
-                self._btn_operate = ui.Button(
-                    "Tools * Operate", width=140, height=40,
-                    style={"color": 0xFFFFFFFF},
-                    clicked_fn=self._toggle_operate_mode,
-                )
-                # 초기 표시 상태(operate_mode가 True면 Operate 버튼만 보이게)
-                self._refresh_mode_button()
-
-                ui.Spacer()
-
-
-        # ── Dock windows
+        # 도킹
         dock_window_in_window("Meta Factory v3.0", "Viewport", DockPosition.TOP, 0.05)
         dock_window_in_window("AMR Information", "Viewport", DockPosition.LEFT, 0.20)
         dock_window_in_window("Status Panel", "Viewport", DockPosition.RIGHT, 0.25)
         dock_window_in_window("Bottom Bar", "Viewport", DockPosition.BOTTOM, 0.10)
 
-        # ── 테스트: AMR 모델 불러오기 (예: C:/omniverse_exts/AMR.usd)
+        # (테스트) AMR 모델 레퍼런스 로드 시도
         try:
-            self._import_amr_model(
-                "C:/omniverse_exts/AMR.usd", prim_name="/World/AMR_0"
-            )
+            self._import_amr_model("C:/omniverse_exts/AMR.usd", prim_name="/World/AMR_0")
         except Exception as e:
-            # 확실히 확장 실패하지 않도록 예외를 잡아 ErrorLog에만 남김
             print("[USD Import] Failed:", e)
             self._append_error_line(f"USD Import failed: {e}")
 
     # 상태 줄
     def _draw_status_line(self, label: str, is_connected: bool):
         glyph = "●" if is_connected else "?"
-        # ABGR
-        GREEN = 0xFF00FF00
+        GREEN = 0xFF00FF00  # ABGR
         RED = 0xFF0000FF
         color = GREEN if is_connected else RED
 
@@ -287,7 +153,6 @@ class UiLayoutBase:
             return
 
         now = time.time()
-
         if (
             self._err_last == text
             and (now - self._err_last_time) < self._err_merge_sec
@@ -375,7 +240,9 @@ class UiLayoutBase:
             if pid in getattr(self, "_amr_cards", {}):
                 continue
             card = AmrCard(self._amr_list_stack, amr_id=f"AMR {i+1}")
-            card.update({"status": None, "liftStatus": None, "containerCode": None, "batteryLevel": 0})
+            card.update(
+                {"status": None, "liftStatus": None, "containerCode": None, "batteryLevel": 0}
+            )
             self._amr_cards[pid] = card
 
     def _sync_amr_cards(self, items):
@@ -392,8 +259,10 @@ class UiLayoutBase:
 
             card = self._amr_cards.get(amr_id)
             if card is None:
-                card = AmrCard(self._amr_list_stack, amr_id,
-                               on_plus=lambda a=amr_id: self._on_amr_plus(a))
+                card = AmrCard(
+                    self._amr_list_stack, amr_id,
+                    on_plus=lambda a=amr_id: self._on_amr_plus(a)
+                )
                 self._amr_cards[amr_id] = card
             card.update(it)
 

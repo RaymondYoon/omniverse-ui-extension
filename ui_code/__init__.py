@@ -151,13 +151,27 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
     # ───────────────────── threading helper ────────────────────
     def _post_to_ui(self, fn, *args, **kwargs):
         app = self._app or kit_app.get_app()
-        cb = lambda: fn(*args, **kwargs)
-        if hasattr(app, "post_to_main_thread"):
-            app.post_to_main_thread(cb)
-        elif hasattr(app, "get_async_action_queue"):
-            app.get_async_action_queue().put_nowait(cb)
-        else:
-            cb()
+
+        def safe_cb():
+            try:
+                fn(*args, **kwargs)
+            except Exception as e:
+                print("[Platform.ui] UI update failed:", e)
+
+        try:
+            # draw 끝난 뒤 안전하게 실행
+            if hasattr(app, "post_render_event_stream"):
+                app.post_render_event_stream.create_subscription_to_push(safe_cb)
+            elif hasattr(app, "post_to_main_thread"):
+                app.post_to_main_thread(safe_cb)
+            elif hasattr(app, "get_async_action_queue"):
+                app.get_async_action_queue().put_nowait(safe_cb)
+            else:
+                safe_cb()
+        except Exception as e:
+            print("[Platform.ui] post_to_ui scheduling failed:", e)
+            safe_cb()
+
 
     # ────────────────────── callbacks ──────────────────────────
     def _on_alive_change(self, alive: bool):

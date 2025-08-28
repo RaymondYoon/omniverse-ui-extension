@@ -2,22 +2,24 @@
 
 import time
 from pathlib import Path
+from functools import partial
 
 import omni.ui as ui
 from omni.ui import dock_window_in_window, DockPosition
 import omni.usd
 
-# ✅ 상대 임포트 (extension.toml의 [python.module] = "platform_ext" 기준)
-from ui_code.ui.common import _fill
-from ui_code.ui.amr_card import AmrCard
+# main.py (맨 위 임포트 부분만 교체)
+from ui_code.ui.utils.common import _fill
+from ui_code.ui.components.amr_card import AmrCard
+
 from ui_code.Container.container_panel import ContainerPanel
 from ui_code.Mission.mission_panel import MissionPanel
 
-# 화면 구성 파트 분리
-from ui_code.ui.top_bar import build_top_bar
-from ui_code.ui.amr_panel import build_amr_panel
-from ui_code.ui.status_panel import build_status_panel
-from ui_code.ui.bottom_bar import build_bottom_bar
+from ui_code.ui.sections.top_bar import build_top_bar
+from ui_code.ui.sections.amr_panel import build_amr_panel
+from ui_code.ui.sections.status_panel import build_status_panel
+from ui_code.ui.sections.bottom_bar import build_bottom_bar
+
 
 
 class UiLayoutBase:
@@ -266,12 +268,14 @@ class UiLayoutBase:
                 self._amr_cards[amr_id] = card
             card.update(it)
 
+        removed_placeholder = False
         # 실제 데이터가 하나라도 있으면 플레이스홀더 제거
         if arr:
             for key in list(self._amr_cards.keys()):
                 if key.startswith("__placeholder_"):
                     self._amr_cards[key].destroy()
                     del self._amr_cards[key]
+                    removed_placeholder = True
 
         # 사라진 카드 제거(실제 ID 기준)
         if arr:
@@ -279,3 +283,17 @@ class UiLayoutBase:
                 if not amr_id.startswith("__placeholder_") and amr_id not in seen:
                     self._amr_cards[amr_id].destroy()
                     del self._amr_cards[amr_id]
+
+        if removed_placeholder:
+            try:
+                if hasattr(self, "_amr_list_stack"):
+                    self._amr_list_stack.clear()  # 안전하게 비우기
+                    for amr_id, card in list(self._amr_cards.items()):
+                        new_card = AmrCard(self._amr_list_stack, amr_id)
+                        new_card.update({})
+                        self._amr_cards[amr_id] = new_card
+
+                if hasattr(self, "_amr_scroll"):
+                    self._amr_scroll.scroll_y = 0.0
+            except Exception as e:
+                print("[AMR] refresh failed:", e)

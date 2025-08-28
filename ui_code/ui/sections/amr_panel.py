@@ -10,6 +10,8 @@ def build_amr_panel(self):
     )
     self._amr_cards = {}
     with self._amr_win.frame:
-        with ui.ScrollingFrame(style={"background_color": 0x00000000}, height=_fill()):
+        with ui.ScrollingFrame(style={"background_color": 0x00000000}, 
+                               height=_fill()) as sf:
+            self._amr_scroll = sf
             with ui.VStack(spacing=8, width=_fill()) as v:
                 self._amr_list_stack = v

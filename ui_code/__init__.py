@@ -1,9 +1,11 @@
 # __init__.py — IExt + 네트워크/모델 업데이트 (UI 메서드 호출만)
+
 import os
 import json
 import threading
 import urllib.request
 import urllib.error
+from collections import deque  # ★ UI 작업 큐
 
 import carb
 import omni.ext
@@ -75,20 +77,29 @@ class HttpPinger:
 class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
     # ───────────────────────── lifecycle ───────────────────────
     def on_startup(self, ext_id):
-        # 선택 이벤트 구독 핸들
         self._sel_sub = None
 
-        # 1) UI 먼저 올림
+        # 1) UI 먼저
         UiLayoutBase.on_startup(self, ext_id)
-
-        # UI가 뜨자마자 플레이스홀더 카드로 AMR 패널을 '보이게'
         self._show_placeholder_amr_cards(4)
 
         print("[Platform.ui.__init__] logic startup")
 
-        # 2) 앱/클라이언트/콜백 설정
+        # 2) 앱 핸들 + UI 작업큐
         self._app = kit_app.get_app()
+        self._ui_jobs = deque()
 
+        # 👉 매 프레임은 _on_update 하나만 구독
+        if hasattr(self._app, "get_update_event_stream"):
+            self._ui_tick_sub = self._app.get_update_event_stream().create_subscription_to_pop(
+                self._on_update, name="platform-ui-update"
+            )
+        else:
+            self._ui_tick_sub = self._app.post_render_event_stream.create_subscription_to_pop(
+                self._on_update, name="platform-ui-update"
+            )
+
+        # 3) 클라이언트 시작
         base_url = self._load_base_url_from_network()
         print(f"[Platform.ui] base_url = {base_url}")
 
@@ -99,30 +110,42 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
         self._client.add_on_response(self._on_client_response)
         self._client.start(map_code="RR_Floor")
 
-        # 3) Fleet 서버 핑 시작
+        # 4) Fleet 핑
         fleet_url = "http://172.16.110.190:5000/"
         self._fleet_pinger = HttpPinger(
-            url=fleet_url,
-            interval=2.0,
-            timeout=1.5,
-            on_change=lambda alive: self._post_to_ui(
-                self._set_status_dot, "Fleet Server", alive
-            ),
+            url=fleet_url, interval=2.0, timeout=1.5,
+            on_change=lambda alive: self._post_to_ui(self._set_status_dot, "Fleet Server", alive),
         )
         self._fleet_pinger.start()
         print(f"[Platform.ui] Fleet pinger started → {fleet_url}")
 
+
     def on_shutdown(self):
         try:
-            # 선택 이벤트 구독 해제
+            # 이벤트 구독 해제
+            if getattr(self, "_ui_tick_sub", None):
+                self._ui_tick_sub = None
             if getattr(self, "_sel_sub", None):
                 self._sel_sub = None
+
+            # 백그라운드들 정지
             if getattr(self, "_fleet_pinger", None):
                 self._fleet_pinger.stop()
             if getattr(self, "_client", None):
                 self._client.stop()
+
+            # UI 작업 큐 비우기
+            if getattr(self, "_ui_jobs", None):
+                try:
+                    self._ui_jobs.clear()
+                except Exception:
+                    pass
+                self._ui_jobs = None
         finally:
             UiLayoutBase.on_shutdown(self)
+        print("[Platform.ui] using __init__.py:", __file__)
+
+
 
     # ───────────────────── config loader ───────────────────────
     def _load_base_url_from_network(self) -> str:
@@ -145,33 +168,37 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
                 except Exception:
                     pass
         # 파일이 없거나 파싱 실패 시 기본 주소
-        # return "http://172.16.110.29:49000/"
         return "http://172.16.110.67:49000/"
 
     # ───────────────────── threading helper ────────────────────
     def _post_to_ui(self, fn, *args, **kwargs):
-        app = self._app or kit_app.get_app()
-
-        def safe_cb():
+        """백그라운드 스레드에서 호출 → 메인스레드 update에서 실행"""
+        def job():
             try:
                 fn(*args, **kwargs)
             except Exception as e:
                 print("[Platform.ui] UI update failed:", e)
 
-        try:
-            # draw 끝난 뒤 안전하게 실행
-            if hasattr(app, "post_render_event_stream"):
-                app.post_render_event_stream.create_subscription_to_push(safe_cb)
-            elif hasattr(app, "post_to_main_thread"):
-                app.post_to_main_thread(safe_cb)
-            elif hasattr(app, "get_async_action_queue"):
-                app.get_async_action_queue().put_nowait(safe_cb)
-            else:
-                safe_cb()
-        except Exception as e:
-            print("[Platform.ui] post_to_ui scheduling failed:", e)
-            safe_cb()
+        # on_startup 아주 초기 타이밍 보호
+        if not hasattr(self, "_ui_jobs") or self._ui_jobs is None:
+            job()  # 큐가 아직 없다면 즉시 실행(초기 UI 구성 시점)
+            return
 
+        self._ui_jobs.append(job)
+
+    def _drain_ui_jobs(self, *_):
+        q = getattr(self, "_ui_jobs", None)
+        if not q:
+            return
+        while True:
+            try:
+                job = q.popleft()
+            except IndexError:
+                break
+            try:
+                job()
+            except Exception as e:
+                print("[Platform.ui] UI update failed:", e)
 
     # ────────────────────── callbacks ──────────────────────────
     def _on_alive_change(self, alive: bool):
@@ -215,6 +242,8 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
             self._post_to_ui(self._set_model, "m_amr_running", f"{running} Running")
             self._post_to_ui(self._set_model, "m_amr_waiting", f"{waiting} Waiting")
             self._post_to_ui(self._sync_amr_cards, arr)
+            # 3D 동기화 (amr_3d.init 은 UiLayoutBase.on_startup 내부에서 호출됨)
+            self._post_to_ui(self._amr3d.sync, arr)
 
         elif data_type == "ContainerInfo":
             arr = data if isinstance(data, list) else []
@@ -302,7 +331,6 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
         self._apply_operate_mode(self._operate_mode)
         self._refresh_mode_button()   # 버튼이 아직 없으면 hasattr 가드로 그냥 넘어갑니다
 
-
     def _refresh_mode_button(self):
         # Operate 모드면 Operate 버튼만 보이고, 아니면 Edit 버튼만 보이게
         try:
@@ -312,3 +340,14 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
                 self._btn_operate.visible = self._operate_mode
         except Exception:
             pass
+
+    def _on_update(self, e):
+        # 1) AMR 자연스러운 이동/회전 보간
+        try:
+            if hasattr(self, "_amr3d") and self._amr3d:
+                self._amr3d.update()   # dt는 내부에서 자동 계산
+        except Exception as ex:
+            print("[Platform.ui] amr3d.update failed:", ex)
+
+        # 2) UI 작업큐 비우기 (메인스레드 안전)
+        self._drain_ui_jobs(e)

@@ -1,6 +1,6 @@
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 
 import omni.ui as ui
 from omni.ui import dock_window_in_window, DockPosition
@@ -76,6 +76,9 @@ class UiLayoutBase:
 
         self.m_mission_reserved   = ui.SimpleStringModel("Reserved: 0")
         self.m_mission_inprogress = ui.SimpleStringModel("In Progress: 0")
+
+        self._amr_latest: Dict[str, Dict[str, Any]] = {}            # ← 추가
+        self._amr_panel.set_data_resolver(lambda rid: self._amr_latest.get(str(rid)))
 
         # 3D 동기화 엔진
         self._amr3d = Amr3D()
@@ -205,16 +208,33 @@ class UiLayoutBase:
         arr = items if isinstance(items, list) else []
         seen = set()
 
+        # 최신 데이터 저장소가 없으면 만들어 둠(안전)
+        if not hasattr(self, "_amr_latest"):
+            self._amr_latest = {}
+
         for i, it in enumerate(arr):
             amr_id = self._amr_id_of(it, i)
             seen.add(amr_id)
 
+            # 최신 데이터 저장
+            try:
+                self._amr_latest[amr_id] = dict(it)  # (copy해서 보관 추천)
+            except Exception:
+                self._amr_latest[amr_id] = it
+
             card = self._amr_cards.get(amr_id)
             if card is None:
-                # [+] 클릭 시 패널 열기 연결
                 card = AmrCard(self._amr_list_stack, amr_id, on_plus=self._open_amr_panel)
                 self._amr_cards[amr_id] = card
             card.update(it)
+
+            # Details가 이 AMR을 보고 있으면 즉시 반영
+            try:
+                if getattr(self, "_amr_panel", None) and \
+                self._amr_panel.get_selected_id() == str(amr_id):
+                    self._amr_panel.update(self._amr_latest[amr_id])
+            except Exception:
+                pass
 
         removed_placeholder = False
         if arr:
@@ -229,6 +249,11 @@ class UiLayoutBase:
                 if not amr_id.startswith("__placeholder_") and amr_id not in seen:
                     self._amr_cards[amr_id].destroy()
                     del self._amr_cards[amr_id]
+                    # 사라진 AMR은 저장소에서도 제거
+                    try:
+                        del self._amr_latest[amr_id]
+                    except Exception:
+                        pass
 
         if removed_placeholder:
             try:

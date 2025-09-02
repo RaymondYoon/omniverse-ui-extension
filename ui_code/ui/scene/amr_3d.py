@@ -41,6 +41,8 @@ class Amr3D:
         self._targets    = {}   # rid -> (tu, tv, tyaw)
         self._state      = {}   # rid -> "turn" | "move" | "idle"
 
+        self._AMR_SCALE = 0.2
+
     # -------------------- lifecycle --------------------
     def init(self, amr_usd_path: str):
         self._ctx   = omni.usd.get_context()
@@ -81,7 +83,7 @@ class Amr3D:
         self._mode = mode
 
     def set_config(self, *, tilt_x=None, yaw_sign=None, yaw_offset=None,
-                   sign_v=None, scale_corr=None, offset_u=None, offset_v=None):
+                   sign_v=None, scale_corr=None, offset_u=None, offset_v=None, amr_scale=None):
         if tilt_x     is not None: self._TILT_X_DEG = float(tilt_x)
         if yaw_sign   is not None: self._YAW_SIGN   = float(yaw_sign)
         if yaw_offset is not None: self._YAW_OFFSET = float(yaw_offset)
@@ -89,6 +91,7 @@ class Amr3D:
         if scale_corr is not None: self._SCALE_CORR = float(scale_corr)
         if offset_u   is not None: self._OFFSET_U   = float(offset_u)
         if offset_v   is not None: self._OFFSET_V   = float(offset_v)
+        if amr_scale  is not None: self._AMR_SCALE  = float(amr_scale)
 
     def set_motion(self, *, move_speed_mm_s=None, yaw_speed_dps=None,
                    yaw_eps_deg=None, pos_eps_mm=None):
@@ -140,7 +143,7 @@ class Amr3D:
         # 기본값 보장
         t_op.Set(Gf.Vec3d(0.0, 0.0, 0.0))
         r_op.Set(Gf.Vec3d(0.0, 0.0, 0.0))
-        s_op.Set(Gf.Vec3d(1.0, 1.0, 1.0))
+        s_op.Set(Gf.Vec3d(self._AMR_SCALE, self._AMR_SCALE, self._AMR_SCALE))
         return t_op, r_op, s_op
 
     def _map_to_units(self, it: dict):
@@ -194,6 +197,12 @@ class Amr3D:
             if t_op is None:
                 t_op, rxyz_op, s_op = self._ensure_ops(prim)
                 self._ops_cache[rid] = (t_op, rxyz_op, s_op)
+            else:
+            # 이미 존재하는 프림에도 스케일을 항상 강제 적용
+                try:
+                    s_op.Set(Gf.Vec3d(self._AMR_SCALE, self._AMR_SCALE, self._AMR_SCALE))
+                except Exception:
+                    pass
 
             u, v = self._map_to_units(it)
             yaw = self._norm_deg(self._YAW_SIGN * float(it.get("robotOrientation", 0.0)) + self._YAW_OFFSET)

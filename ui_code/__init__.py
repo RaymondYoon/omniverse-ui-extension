@@ -226,36 +226,125 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
         data_type = payload.get("dataType")
         data = (response or {}).get("data")
 
+        # __init__.py  → PlatformUiExtension._on_client_response() 내부
         if data_type == "AMRInfo":
             arr = data if isinstance(data, list) else []
 
-            def _is_running(it):
-                # status가 숫자인 경우(예: INTASK=4)도 잡아줌
+            AMR_EXIT      = 1
+            AMR_OFFLINE   = 2
+            AMR_IDLE      = 3
+            AMR_INTASK    = 4
+            AMR_CHARGING  = 5
+            AMR_UPDATING  = 6
+            AMR_EXCEPTION = 7
+
+            def _status_code(it):
+                """status/robotStatus/state에서 Unity와 동일한 숫자코드 추출"""
                 s = it.get("status") or it.get("robotStatus") or it.get("state")
                 if isinstance(s, (int, float)):
-                    return int(s) == 4  # AMRStatusCode.INTASK
-                s = (str(s) or "").strip().lower()
-                return s in ("running", "working", "move", "moving", "busy", "intask")
+                    return int(s)
+                # "3", "4" 같은 문자열 숫자면 그대로 변환
+                try:
+                    return int(str(s).strip())
+                except Exception:
+                    # 혹시 문자열 상태명이 올 때(옵션): 최소 매핑만 지원
+                    m = {
+                        "idle": AMR_IDLE,
+                        "intask": AMR_INTASK, "running": AMR_INTASK, "working": AMR_INTASK,
+                        "charging": AMR_CHARGING,
+                    }
+                    return m.get((str(s) or "").strip().lower(), 0)
 
-            running = sum(1 for it in arr if _is_running(it))
-            waiting = max(0, len(arr) - running)
-            self._post_to_ui(self._set_model, "m_amr_running", f"{running} Running")
-            self._post_to_ui(self._set_model, "m_amr_waiting", f"{waiting} Waiting")
+            total = len(arr)
+            working = waiting = charging = 0
+
+            for it in arr:
+                code = _status_code(it)
+                if code == AMR_IDLE:
+                    waiting += 1
+                elif code == AMR_INTASK:
+                    working += 1
+                elif code == AMR_CHARGING:
+                    charging += 1
+                # EXIT/OFFLINE/UPDATING/EXCEPTION 등은 집계에서 제외(=Unity 코드와 동일 동작)
+
+            # UI 모델 갱신 (Unity와 동일한 4항목)
+            self._post_to_ui(self._set_model, "m_amr_total",    f"Total: {total}")
+            self._post_to_ui(self._set_model, "m_amr_working",  f"Working: {working}")
+            self._post_to_ui(self._set_model, "m_amr_waiting",  f"Waiting: {waiting}")
+            self._post_to_ui(self._set_model, "m_amr_charging", f"Charging: {charging}")
+
+            # 기존 카드/3D 동기화는 그대로 유지
             self._post_to_ui(self._sync_amr_cards, arr)
-            # 3D 동기화 (amr_3d.init 은 UiLayoutBase.on_startup 내부에서 호출됨)
             self._post_to_ui(self._amr3d.sync, arr)
 
         elif data_type == "ContainerInfo":
             arr = data if isinstance(data, list) else []
             total = len(arr)
-            off_map = sum(
-                1
-                for c in arr
-                if c.get("isOffMap")
-                or str(c.get("nodeCode", "")).lower() in ("", "none", "off_map", "offmap")
-            )
-            self._post_to_ui(self._set_model, "m_pallet_total", f"Total: {total}")
-            self._post_to_ui(self._set_model, "m_pallet_offmap", f"Off Map: {off_map}")
+
+            def _in_map(c: dict) -> bool:
+                # Unity: inMapStatus가 최우선
+                if "inMapStatus" in c:
+                    return bool(c.get("inMapStatus"))
+                # 보완 규칙
+                if c.get("isOffMap") is not None:
+                    return not bool(c.get("isOffMap"))
+                node = str(c.get("nodeCode", "")).strip().lower()
+                return node not in ("", "none", "off_map", "offmap")
+
+            def _carry_kind(c: dict) -> str:
+                """
+                Stationary / InHandling 분류.
+                - bool: True=InHandling, False=Stationary
+                - int/str 숫자: 0=Stationary, 1=InHandling (Unity enum과 동일)
+                - 문자열: 키워드 매핑
+                - 알 수 없으면 Unity 코드의 else 분기처럼 InHandling 처리
+                """
+                v = c.get("isCarry")
+                if v is None:
+                    v = c.get("carryStatus") or c.get("carry")
+
+                # bool
+                if isinstance(v, bool):
+                    return "in_handling" if v else "stationary"
+
+                # 숫자 (문자 숫자 포함)
+                try:
+                    iv = int(str(v).strip())
+                    return "stationary" if iv == 0 else "in_handling"
+                except Exception:
+                    pass
+
+                # 문자열 키워드
+                s = (str(v) or "").strip().lower()
+                if s in ("0", "stationary", "stay", "parked"):
+                    return "stationary"
+                if s in ("1", "inhandling", "in_handling", "handling", "moving", "move", "carry", "carrying"):
+                    return "in_handling"
+
+                # 기본값: InHandling (Unity 코드의 else 분기와 동일)
+                return "in_handling"
+
+            off_map = 0
+            stationary = 0
+            in_handling = 0
+
+            for c in arr:
+                if _in_map(c):
+                    kind = _carry_kind(c)
+                    if kind == "stationary":
+                        stationary += 1
+                    else:
+                        in_handling += 1
+                else:
+                    off_map += 1
+
+            # UI 모델 갱신 (Unity와 동일한 4항목)
+            self._post_to_ui(self._set_model, "m_pallet_total",      f"Total: {total}")
+            self._post_to_ui(self._set_model, "m_pallet_offmap",     f"Off Map: {off_map}")
+            self._post_to_ui(self._set_model, "m_pallet_stationary", f"Stationary: {stationary}")
+            self._post_to_ui(self._set_model, "m_pallet_inhandling", f"In Handling: {in_handling}")
+
 
         elif data_type == "WorkingInfo":
             items = data if isinstance(data, list) else []

@@ -1,6 +1,6 @@
-# main.py — UI 전용 (IExt 상속 금지, ErrorLog FIFO 로직 포함)
 import time
 from pathlib import Path
+from typing import Optional
 
 import omni.ui as ui
 from omni.ui import dock_window_in_window, DockPosition
@@ -12,6 +12,7 @@ from ui_code.ui.scene.amr_3d import Amr3D
 
 from ui_code.Container.container_panel import ContainerPanel
 from ui_code.Mission.mission_panel import MissionPanel
+from ui_code.AMR.amr_details_panel import AMRPanel
 
 from ui_code.ui.sections.top_bar import build_top_bar
 from ui_code.ui.sections.amr_panel import build_amr_panel
@@ -48,26 +49,33 @@ class UiLayoutBase:
         # 외부 패널
         self._container_panel = ContainerPanel()
         self._mission_panel   = MissionPanel()
+        self._amr_panel       = AMRPanel()
 
         # 중복 창 제거
         for t in ["Meta Factory v3.0", "AMR Information", "Status Panel", "Bottom Bar"]:
             self._kill_window(t)
 
         # 상태/모델 초기화
-        self._status_bullets   = {}
-        self._err_merge_sec    = 20.0
-        self._err_last         = None
-        self._err_last_time    = 0.0
-        self._err_last_count   = 0
-        self._error_models     = []
-        self._error_vstack     = None
+        self._status_bullets    = {}
+        self._err_merge_sec     = 20.0
+        self._err_last          = None
+        self._err_last_time     = 0.0
+        self._err_last_count    = 0
+        self._error_models      = []
+        self._error_vstack      = None
 
-        self.m_amr_running       = ui.SimpleStringModel("0 Running")
-        self.m_amr_waiting       = ui.SimpleStringModel("0 Waiting")
-        self.m_pallet_total      = ui.SimpleStringModel("Total: 0")
-        self.m_pallet_offmap     = ui.SimpleStringModel("Off Map: 0")
-        self.m_mission_reserved  = ui.SimpleStringModel("Reserved: 0")
-        self.m_mission_inprogress= ui.SimpleStringModel("In Progress: 0")
+        self.m_amr_total    = ui.SimpleStringModel("Total: 0")
+        self.m_amr_working  = ui.SimpleStringModel("Working: 0")
+        self.m_amr_waiting  = ui.SimpleStringModel("Waiting: 0")
+        self.m_amr_charging = ui.SimpleStringModel("Charging: 0")
+
+        self.m_pallet_total       = ui.SimpleStringModel("Total: 0")
+        self.m_pallet_offmap      = ui.SimpleStringModel("Off Map: 0")
+        self.m_pallet_stationary  = ui.SimpleStringModel("Stationary: 0")
+        self.m_pallet_inhandling  = ui.SimpleStringModel("In Handling: 0")
+
+        self.m_mission_reserved   = ui.SimpleStringModel("Reserved: 0")
+        self.m_mission_inprogress = ui.SimpleStringModel("In Progress: 0")
 
         # 3D 동기화 엔진
         self._amr3d = Amr3D()
@@ -118,6 +126,15 @@ class UiLayoutBase:
             self._mission_panel.show()
         except Exception as e:
             print("[Platform.ui.main] MissionPanel.show failed:", e)
+
+    def _open_amr_panel(self, amr_id: Optional[str] = None):
+        try:
+            print(f"[UI] _open_amr_panel({amr_id})")
+            if not hasattr(self, "_amr_panel") or self._amr_panel is None:
+                self._amr_panel = AMRPanel()
+            self._amr_panel.show(amr_id)   # 전달된 AMR ID 반영
+        except Exception as e:
+            print("[Platform.ui.main] AMRPanel.show failed:", e)
 
     # ────────────────────── ui helpers ─────────────────────────
     def _set_model(self, model_attr: str, value: str):
@@ -170,9 +187,6 @@ class UiLayoutBase:
     def _amr_id_of(self, it: dict, idx: int) -> str:
         return str(it.get("robotId") or it.get("amrId") or it.get("id") or it.get("name") or f"AMR-{idx+1}")
 
-    def _on_amr_plus(self, amr_id: str):
-        print(f"[AMR] plus clicked: {amr_id}")
-
     def _show_placeholder_amr_cards(self, count: int = 4):
         if not hasattr(self, "_amr_list_stack"):
             return
@@ -180,7 +194,7 @@ class UiLayoutBase:
             pid = f"__placeholder_{i+1}"
             if pid in getattr(self, "_amr_cards", {}):
                 continue
-            card = AmrCard(self._amr_list_stack, amr_id=f"AMR {i+1}")
+            card = AmrCard(self._amr_list_stack, amr_id=f"AMR {i+1}", on_plus=self._open_amr_panel)
             card.update({"status": None, "liftStatus": None, "containerCode": None, "batteryLevel": 0})
             self._amr_cards[pid] = card
 
@@ -197,7 +211,8 @@ class UiLayoutBase:
 
             card = self._amr_cards.get(amr_id)
             if card is None:
-                card = AmrCard(self._amr_list_stack, amr_id, on_plus=lambda a=amr_id: self._on_amr_plus(a))
+                # [+] 클릭 시 패널 열기 연결
+                card = AmrCard(self._amr_list_stack, amr_id, on_plus=self._open_amr_panel)
                 self._amr_cards[amr_id] = card
             card.update(it)
 
@@ -219,11 +234,12 @@ class UiLayoutBase:
             try:
                 if hasattr(self, "_amr_list_stack"):
                     self._amr_list_stack.clear()
-                    for amr_id, card in list(self._amr_cards.items()):
-                        new_card = AmrCard(self._amr_list_stack, amr_id)
+                    for amr_id, old_card in list(self._amr_cards.items()):
+                        new_card = AmrCard(self._amr_list_stack, amr_id, on_plus=self._open_amr_panel)
                         new_card.update({})
                         self._amr_cards[amr_id] = new_card
                 if hasattr(self, "_amr_scroll"):
                     self._amr_scroll.scroll_y = 0.0
             except Exception as e:
                 print("[AMR] refresh failed:", e)
+

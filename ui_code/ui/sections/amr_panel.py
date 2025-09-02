@@ -5,7 +5,7 @@ from ui_code.ui.utils.common import _fill
 def build_amr_panel(self):
     # AMR 카드 컨테이너 윈도우 + 스택 준비
     self._amr_win = ui.Window(
-        "AMR Information", width=260, height=800,
+        "AMR Information", width=400, height=800,
         style={"background_color": 0x000000A0},
     )
     self._amr_cards = {}

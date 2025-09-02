@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 import omni.ui as ui
 from omni.ui import dock_window_in_window, DockPosition
 
@@ -31,12 +31,12 @@ class AMRPanel:
         self._m_mission     = ui.SimpleStringModel("-")
         self._m_node        = ui.SimpleStringModel("-")
         self._m_pos         = ui.SimpleStringModel("-")
-        self._m_batt        = ui.SimpleFloatModel(0.0)
+        self._m_batt        = ui.SimpleFloatModel(0.0, min=0.0, max=1.0)
 
         # 위젯 참조
         self._bbar: Optional[ui.ProgressBar] = None
         self._status_dot: Optional[ui.Label] = None
-
+        self._resolver: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None
     # UI
     def show(self, amr_id: Optional[str] = None):
         if amr_id:
@@ -44,6 +44,11 @@ class AMRPanel:
 
         if self._win:
             self._win.visible = True
+            rid = self._selected_id.as_string
+            if self._resolver and rid:
+                data = self._resolver(rid)
+                if data:
+                    self.update(data)
             return
 
         self._win = ui.Window(
@@ -65,7 +70,7 @@ class AMRPanel:
                             ui.StringField(model=self._selected_id, read_only=True,
                                            style={"color": _COL_TEXT}, width=_fill())
                         with ui.HStack(spacing=6, width=_fill()):
-                            self._status_dot = ui.Label("●", width=14,
+                            self._status_dot = ui.Label("-", width=14,
                                                         style={"color": _COL_DOT_WAITING, "font_size": 16})
                             ui.StringField(model=self._m_status, read_only=True,
                                            style={"color": _COL_TEXT}, width=_fill())
@@ -85,9 +90,9 @@ class AMRPanel:
 
                 # 배터리 바
                 self._bbar = ui.ProgressBar(model=self._m_batt, height=16, width=_fill())
-                self._sync_batt_color()
+                self._apply_progress_style({"background_color": _COL_TRACK})
                 self._m_batt.add_value_changed_fn(lambda *_: self._sync_batt_color())
-
+                self._sync_batt_color()
                 ui.Separator()
 
                 # 정보 라인
@@ -96,13 +101,14 @@ class AMRPanel:
                 self._kv("Mission :",      self._m_mission)
                 self._kv("Node Code :",    self._m_node)
                 self._kv("Position :",     self._m_pos)
-
-        # 오른쪽 도킹
-        try:
-            dock_window_in_window(self.TITLE, "Viewport", DockPosition.RIGHT, 0.28)
-        except Exception:
-            pass
         self._win.visible = True
+
+        rid = self._selected_id.as_string
+        if self._resolver and rid:
+            data = self._resolver(rid)
+            if data:
+                self.update(data)
+
 
     def _kv(self, key: str, model: ui.SimpleStringModel):
         with ui.HStack(width=_fill()):
@@ -117,15 +123,8 @@ class AMRPanel:
         elif v >= 0.20: col = _COL_ORANGE
         else:           col = _COL_RED
 
-        for key in ("secondary_color", "bar_color", "color"):
-            try:
-                st = dict(getattr(self._bbar, "style", {}))
-                st[key] = col
-                # st["background_color"] = _COL_TRACK  # 필요하면 트랙도
-                self._bbar.style = st
-                break
-            except Exception:
-                continue
+        # 문서 스타일 우선 → 폴백 순서대로 적용
+        self._apply_progress_style({"color": col})
 
     def _sync_status_dot(self, status_text: str):
         if not self._status_dot:
@@ -170,7 +169,7 @@ class AMRPanel:
         else:
             try:
                 self._m_pos.set_value(
-                    f"({float(x):.2f}, {float(y):.2f})  θ={float(th):.1f}°" if th is not None
+                    f"({float(x):.2f}, {float(y):.2f})  Rotate={float(th):.1f}°" if th is not None
                     else f"({float(x):.2f}, {float(y):.2f})"
                 )
             except Exception:
@@ -195,3 +194,35 @@ class AMRPanel:
     # (옵션) 외부에서 현재 선택 ID 읽을 때 사용
     def get_selected_id(self) -> str:
         return self._selected_id.as_string
+
+    def set_data_resolver(self, fn: Callable[[str], Optional[Dict[str, Any]]]):
+            self._resolver = fn
+
+    def refresh(self):
+        if not self._resolver:
+            return
+        rid = self._selected_id.as_string
+        if rid:
+            data = self._resolver(rid)
+            if data:
+                self.update(data)
+
+    def _apply_progress_style(self, base: dict):
+        """Kit 버전별 스타일 키 차이에 대비해 안전하게 적용."""
+        # 1) 공식 문서 방식
+        try:
+            self._bbar.set_style(base)
+            return
+        except Exception:
+            pass
+        # 2) 대체 키 시도
+        for k in ("secondary_color", "bar_color", "color"):
+            try:
+                st = dict(getattr(self._bbar, "style", {}))
+                st.update(base)
+                if "color" not in base:
+                    st[k] = base.get(k, base.get("color"))
+                self._bbar.style = st
+                return
+            except Exception:
+                continue

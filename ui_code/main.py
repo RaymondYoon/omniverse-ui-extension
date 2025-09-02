@@ -10,7 +10,7 @@ from ui_code.ui.utils.common import _fill
 from ui_code.ui.components.amr_card import AmrCard
 from ui_code.ui.scene.amr_3d import Amr3D
 
-from ui_code.Container.container_panel import ContainerPanel
+from ui_code.Container.container_list_panel import ContainerPanel
 from ui_code.Mission.mission_panel import MissionPanel
 from ui_code.AMR.amr_details_panel import AMRPanel
 

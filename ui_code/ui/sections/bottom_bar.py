@@ -1,10 +1,12 @@
 # bottom_bar.py
 import omni.ui as ui
 from ui_code.ui.utils.common import _fill
+from ui_code.AMR.amr_control_panel import AMRControlPanel
 
 def build_bottom_bar(self):
     # operate/edit 모드 상태 먼저 반영
     self._init_mode_state()
+    self._amr_control_panel = AMRControlPanel()
 
     self._bottom_win = ui.Window(
         "Bottom Bar", width=0, height=60,
@@ -15,7 +17,8 @@ def build_bottom_bar(self):
             ui.Spacer()
             ui.Button("Simulation", height=40, style={"color": 0xFFFFFFFF})
             ui.Button("ChatBot",   height=40, style={"color": 0xFFFFFFFF})
-            ui.Button("Library",   height=40, style={"color": 0xFFFFFFFF})
+            ui.Button("AMR Control",   height=40, style={"color": 0xFFFFFFFF},
+                      clicked_fn=lambda: self._amr_control_panel.show())
 
             self._btn_edit = ui.Button(
                 "Tools * Edit", width=140, height=40,

@@ -43,10 +43,10 @@ class AmrCard:
                             ui.Label("IMG", alignment=ui.Alignment.CENTER, style={"color": 0xFFFFFFFF})
 
                     with ui.VStack(spacing=4, width=_fill()):
-                        self._kv("Status :",       self.m_status)
-                        self._kv("Lift Status :",  self.m_lift)
-                        self._kv("Rack :",         self.m_rack)
-                        self._kv("Working Type :", self.m_wtype)
+                        self._kv("Status :",      self.m_status)
+                        self._kv("Lift Status :", self.m_lift)
+                        self._kv("Rack :",        self.m_rack)
+                        self._kv("Working Type :",self.m_wtype)
 
                 # ── 배터리 바 ──
                 # 문서처럼 set_style 사용. 트랙(배경) 색도 살짝 어둡게.

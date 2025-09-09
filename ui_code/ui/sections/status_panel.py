@@ -24,9 +24,27 @@ _TRACK_RGBA   = (160, 160, 160, 140)  # 회색 트랙
 
 def build_status_panel(self):
     self._status_win = ui.Window(
-        "Status Panel", width=320, height=0,
+        "Status Panel",
+        x=0, y=0, width=350, height=800,
+        flags=ui.WINDOW_FLAGS_NO_MOVE | ui.WINDOW_FLAGS_NO_RESIZE | ui.WINDOW_FLAGS_NO_COLLAPSE,
         style={"background_color": 0x000000A0},
     )
+
+
+    with self._status_win.frame:
+        # 전체를 HStack으로 감싸고, 왼쪽에 폭 350 고정 Frame
+        with ui.HStack(width=_fill(), height=_fill()):
+            with ui.Frame(width=350, height=_fill(), style={"background_color": 0x000000A0}):
+                with ui.VStack(spacing=8, padding=10, width=_fill()):
+                    ui.Label("Equipment Status",
+                             style={"font_size": 18, "color": 0xFFFFFFFF},
+                             word_wrap=True, width=_fill())
+                    ui.Separator()
+                    # ... (중략: 기존 도넛 + 리스트 UI 다 이 Frame 안에 넣기) ...
+                    ui.Spacer(height=8)
+
+            # 오른쪽은 Spacer → 폭을 늘려도 항상 350 유지
+            ui.Spacer(width=_fill())
 
     # 도넛용 이미지 프로바이더 + 중앙 라벨(문자열)
     self._amr_donut_provider = ui.ByteImageProvider()
@@ -182,9 +200,17 @@ def build_status_panel(self):
 
                     # ───────── Mission List ─────────
                     self._section_header_with_button("Mission List", self._open_mission_panel, btn_text="+")
-                    self._text(self.m_mission_reserved, _FIELD_STYLE)
-                    self._text(self.m_mission_inprogress, _FIELD_STYLE)
-                    ui.Separator()
+
+                    with ui.VStack(spacing=3, width=_fill()):   # ← 폭 고정
+                        with ui.HStack(width=_fill()):
+                            ui.Label("-", width=14, style={"color": 0xFFFFFFFF})
+                            self._text(self.m_mission_reserved, _FIELD_STYLE)
+
+                        with ui.HStack(width=_fill()):
+                            ui.Label("-", width=14, style={"color": 0xFFFFFFFF})
+                            self._text(self.m_mission_inprogress, _FIELD_STYLE)
+
+                    ui.Separator(width=_fill())
 
                     # ───────── Error Log ─────────
                     ui.Label("Error Log", style={"font_size": 16, "color": 0xFFFFFFFF}, word_wrap=True, width=_fill())

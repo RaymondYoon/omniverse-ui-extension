@@ -3,9 +3,8 @@
 Omniverse Kit 기반의 사용자 정의 UI 확장 기능입니다.  
 AMR(Autonomous Mobile Robot) 디지털 트윈 및 상태 모니터링을 위해 제작되었습니다.
 
-```
-
 ## 📂 프로젝트 구조
+```
 platform_ext/
 ├─ resource/ # 이미지 및 리소스
 ├─ ui_code/ # UI 관련 코드
@@ -23,10 +22,6 @@ platform_ext/
 ├─ extension.toml # Omniverse Extension 설정
 ├─ README.md
 └─ .gitignore
-
-yaml
-코드 복사
-
 ```
 
 ## ⚙️ 주요 기능

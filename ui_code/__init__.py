@@ -83,6 +83,9 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
         UiLayoutBase.on_startup(self, ext_id)
         self._show_placeholder_amr_cards(4)
 
+        self._containers_latest = {}  # 컨테이너 최신 스냅샷 보관소
+        self._container_panel.set_data_resolver(lambda: self._containers_latest)
+
         print("[Platform.ui.__init__] logic startup")
 
         # 2) 앱 핸들 + UI 작업큐
@@ -160,8 +163,8 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
                 try:
                     with open(p, "r", encoding="utf-8") as f:
                         net = json.load(f)
-                    ip = net.get("opServerIP", "127.0.0.1")
-                    port = str(net.get("opServerPort", "8000"))
+                    ip = net.get("opServerIP", "172.16.110.67")
+                    port = str(net.get("opServerPort", "49000"))
                     https = bool(net.get("https") or port == "443")
                     scheme = "https" if https else "http"
                     return f"{scheme}://{ip}:{port}/"
@@ -278,12 +281,22 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
             self._post_to_ui(self._sync_amr_cards, arr)
             self._post_to_ui(self._amr3d.sync, arr)
 
+        # 최신 AMR 스냅샷 저장(패널 오픈 전/후 모두를 위해)
+            self._amrs_latest = arr
+
+            # 패널이 이미 만들어졌다면, 드롭다운 옵션 즉시 갱신
+            if hasattr(self, "_amr_control_panel") and self._amr_control_panel:
+                arr_for_panel = arr if isinstance(arr, (list, dict)) else []
+                self._post_to_ui(self._amr_control_panel.update_amr_list, arr_for_panel)
+
         elif data_type == "ContainerInfo":
             arr = data if isinstance(data, list) else []
+
+            # ── 통계 집계 ──────────────────────────────────────────────
             total = len(arr)
 
             def _in_map(c: dict) -> bool:
-                # Unity: inMapStatus가 최우선
+                # inMapStatus 최우선
                 if "inMapStatus" in c:
                     return bool(c.get("inMapStatus"))
                 # 보완 규칙
@@ -296,33 +309,27 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
                 """
                 Stationary / InHandling 분류.
                 - bool: True=InHandling, False=Stationary
-                - int/str 숫자: 0=Stationary, 1=InHandling (Unity enum과 동일)
-                - 문자열: 키워드 매핑
-                - 알 수 없으면 Unity 코드의 else 분기처럼 InHandling 처리
+                - int/str 숫자: 0=Stationary, 1=InHandling
+                - 문자열 키워드 매핑
                 """
                 v = c.get("isCarry")
                 if v is None:
                     v = c.get("carryStatus") or c.get("carry")
 
-                # bool
                 if isinstance(v, bool):
                     return "in_handling" if v else "stationary"
 
-                # 숫자 (문자 숫자 포함)
                 try:
                     iv = int(str(v).strip())
                     return "stationary" if iv == 0 else "in_handling"
                 except Exception:
                     pass
 
-                # 문자열 키워드
                 s = (str(v) or "").strip().lower()
                 if s in ("0", "stationary", "stay", "parked"):
                     return "stationary"
                 if s in ("1", "inhandling", "in_handling", "handling", "moving", "move", "carry", "carrying"):
                     return "in_handling"
-
-                # 기본값: InHandling (Unity 코드의 else 분기와 동일)
                 return "in_handling"
 
             off_map = 0
@@ -339,11 +346,49 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
                 else:
                     off_map += 1
 
-            # UI 모델 갱신 (Unity와 동일한 4항목)
+            # UI 모델 갱신 (카운터만)
             self._post_to_ui(self._set_model, "m_pallet_total",      f"Total: {total}")
             self._post_to_ui(self._set_model, "m_pallet_offmap",     f"Off Map: {off_map}")
             self._post_to_ui(self._set_model, "m_pallet_stationary", f"Stationary: {stationary}")
             self._post_to_ui(self._set_model, "m_pallet_inhandling", f"In Handling: {in_handling}")
+
+            # ── 패널용 데이터는 '정규화'해서 캐시에만 저장 (패널로 직접 푸시 금지) ──
+            def _norm_containers(items):
+                norm = {}
+                for i, it in enumerate(items or []):
+                    d = dict(it or {})
+
+                    # ID 보정
+                    cid = str(
+                        d.get("containerCode")
+                        or d.get("id")
+                        or d.get("name")
+                        or f"C{i+1:03d}"
+                    )
+                    d["containerCode"] = cid
+
+                    # 모델 표기 보정 (문자열로)
+                    model = d.get("containerModelCode") or d.get("model")
+                    d["containerModelCode"] = str(model) if model is not None else "-"
+
+                    # 맵 상태 보정
+                    if "inMapStatus" not in d:
+                        if "isOffMap" in d:
+                            d["inMapStatus"] = not bool(d.get("isOffMap"))
+                        else:
+                            node = str(d.get("nodeCode", "")).strip().lower()
+                            d["inMapStatus"] = node not in ("", "none", "offmap", "off_map")
+
+                    norm[cid] = d
+                return norm
+
+            norm = _norm_containers(arr)
+
+            # 캐시만 교체하고, 패널 update_data는 호출하지 않음 (스냅샷 방식)
+            def _apply():
+                self._containers_latest = norm
+
+            self._post_to_ui(_apply)
 
 
         elif data_type == "WorkingInfo":

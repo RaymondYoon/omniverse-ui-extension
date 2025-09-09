@@ -40,7 +40,7 @@ class DigitalTwinClient:
 
     def __init__(
         self,
-        base_url: str = "http://127.0.0.1:8000/",
+        base_url: str = "http://172.16.110.67:49000/",
         timeout: float = 5.0,
         interval: float = 0.5,
     ):

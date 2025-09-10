@@ -1,23 +1,24 @@
-# amr_3d.py — real-time snap-first sync
-# (Unity↔USD 축/단위 자동처리, 단일 rotateXYZ 기반 TRS, 그룹 경로 동적, 중복 생성/경고 제거)
+# amr_3d.py — real-time smooth sync for Omniverse
+# (서버 좌표는 목표점으로만 사용, 옴니버스에서는 매 프레임 부드럽게 보간 이동)
 
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Optional
 from pxr import UsdGeom, Gf
 import omni.usd
+import omni.kit.app as kit_app
 from ui_code.ui.utils.common import _file_uri
 import math, time
 
 
 class Amr3D:
     def __init__(self):
-        # 기본 모드: 서버값 즉시 반영(snap). 필요시 "lerp" / "turnmove" 선택 가능
-        self._mode: Literal["snap", "lerp", "turnmove"] = "snap"
+        # 항상 부드럽게 이동 모드
+        self._mode = "smooth"
 
-        # 현재 AMR 그룹의 루트 경로(이 경로 아래에 AMR_*가 생성됨)
+        # AMR 그룹 루트 경로
         self._group_path = "/World/AMRs"
 
-        # 좌표/축 보정 기본값
+        # 좌표/축 보정
         self._TILT_X_DEG = 0.0
         self._YAW_SIGN   = +1.0
         self._YAW_OFFSET = 0.0
@@ -26,37 +27,36 @@ class Amr3D:
         self._OFFSET_U   = 0.0
         self._OFFSET_V   = 0.0
 
-        # 모션 파라미터(보간 모드)
-        self._MOVE_SPEED_MM_S = 1200.0
-        self._YAW_SPEED_DPS   = 180.0
-        self._YAW_EPS_DEG     = 1.0
-        self._POS_EPS_UNITS   = 0.01  # init에서 10mm로 덮어씀
+        # 모션 파라미터 (속도 기반 이동)
+        self._MOVE_SPEED_MM_S = 900.0   # 0.6 m/s
+        self._YAW_SPEED_DPS   = 110.0    # 90 deg/s
+        self._YAW_EPS_DEG     = 0.5
+        self._POS_EPS_UNITS   = 0.01
 
         self._last_tick = time.perf_counter()
 
-        # 캐시/상태
+        # 캐시
         self._ops_cache  = {}   # rid -> (t_op, rxyz_op, s_op)
         self._pos_cache  = {}   # rid -> (u, v)
         self._yaw_cache  = {}   # rid -> yaw
         self._targets    = {}   # rid -> (tu, tv, tyaw)
-        self._state      = {}   # rid -> "turn" | "move" | "idle"
 
         self._AMR_SCALE = 0.2
+        self._update_sub = None
 
     # -------------------- lifecycle --------------------
     def init(self, amr_usd_path: str):
         self._ctx   = omni.usd.get_context()
         self._stage = self._ctx.get_stage() or (self._ctx.new_stage() or self._ctx.get_stage())
 
-        # /World 보장
         if not self._stage.HasDefaultPrim():
             world = self._stage.DefinePrim("/World", "Xform")
             self._stage.SetDefaultPrim(world)
 
-        # AMR 그룹(Xform) 보장 (현재 경로 사용)
+        # 그룹 보장
         self._group = self._stage.DefinePrim(self._group_path, "Xform")
 
-        # AMR 프로토타입 로드
+        # 프로토타입 로드
         self._asset_uri  = _file_uri(Path(amr_usd_path))
         self._proto_path = "/World/_AMR_proto"
         proto = self._stage.GetPrimAtPath(self._proto_path)
@@ -70,18 +70,22 @@ class Amr3D:
         up = UsdGeom.GetStageUpAxis(self._stage)
         self._is_z_up = (up == UsdGeom.Tokens.z)
 
-        meters_per_unit = UsdGeom.GetStageMetersPerUnit(self._stage) or 0.01  # 기본 1unit=1cm
+        meters_per_unit = UsdGeom.GetStageMetersPerUnit(self._stage) or 0.01
         units_per_meter = 1.0 / meters_per_unit
         self._mm_to_units = units_per_meter / 1000.0
-        self._POS_EPS_UNITS = 10.0 * self._mm_to_units  # 10mm
+        self._POS_EPS_UNITS = 10.0 * self._mm_to_units
 
-        # 모델이 옆으로 눕는 경우(Z-up 스테이지에서 Unity형 모델)를 대비한 기본 틸트
+        # 기본 틸트
         self._TILT_X_DEG = (90.0 if self._is_z_up else 0.0)
 
-    # -------------------- public tuning --------------------
-    def set_mode(self, mode: Literal["snap", "lerp", "turnmove"] = "snap"):
-        self._mode = mode
+        # 프레임 업데이트 구독
+        if not self._update_sub:
+            app = kit_app.get_app()
+            self._update_sub = app.get_update_event_stream().create_subscription_to_pop(
+                lambda e: self.update()
+            )
 
+    # -------------------- config --------------------
     def set_config(self, *, tilt_x=None, yaw_sign=None, yaw_offset=None,
                    sign_v=None, scale_corr=None, offset_u=None, offset_v=None, amr_scale=None):
         if tilt_x     is not None: self._TILT_X_DEG = float(tilt_x)
@@ -102,7 +106,6 @@ class Amr3D:
 
     # -------------------- helpers --------------------
     def _amr_path(self, rid: str) -> str:
-        """현재 그룹 경로 아래에 안전한 이름으로 AMR 경로 생성."""
         rid = "".join(c if (c.isalnum() or c == "_") else "_" for c in str(rid))
         if rid and rid[0].isdigit():
             rid = f"_{rid}"
@@ -110,44 +113,25 @@ class Amr3D:
         return f"{base}/AMR_{rid}"
 
     def _ensure_ops(self, prim):
-        """
-        Prim에 'TRS(translate, rotateXYZ, scale)' 스택을 강제.
-        - 부모 변환 상속: resetXformStack(False)
-        - 기존 xformOp:* 제거 후 원하는 op만 생성
-        - opOrder = [translate, rotateXYZ, scale]
-        """
         xf = UsdGeom.Xformable(prim)
-
-        try:
-            xf.SetResetXformStack(False)
-        except Exception:
-            pass
-
-        try:
-            xf.ClearXformOpOrder()
-        except Exception:
-            pass
-
+        try: xf.SetResetXformStack(False)
+        except Exception: pass
+        try: xf.ClearXformOpOrder()
+        except Exception: pass
         for prop in list(prim.GetProperties()):
             if prop.GetName().startswith("xformOp:"):
-                try:
-                    prim.RemoveProperty(prop.GetName())
-                except Exception:
-                    pass
-
+                try: prim.RemoveProperty(prop.GetName())
+                except Exception: pass
         t_op = xf.AddTranslateOp()
         r_op = xf.AddRotateXYZOp()
         s_op = xf.AddScaleOp()
         xf.SetXformOpOrder([t_op, r_op, s_op])
-
-        # 기본값 보장
         t_op.Set(Gf.Vec3d(0.0, 0.0, 0.0))
         r_op.Set(Gf.Vec3d(0.0, 0.0, 0.0))
         s_op.Set(Gf.Vec3d(self._AMR_SCALE, self._AMR_SCALE, self._AMR_SCALE))
         return t_op, r_op, s_op
 
     def _map_to_units(self, it: dict):
-        # 서버 x,y(mm) → 평면 좌표(u,v)
         x_mm = float(it.get("x", 0.0))
         y_mm = float(it.get("y", 0.0))
         u = x_mm * self._mm_to_units * self._SCALE_CORR + self._OFFSET_U
@@ -160,23 +144,13 @@ class Amr3D:
         return ((deg + 180.0) % 360.0) - 180.0
 
     def _compose_euler(self, yaw_deg: float) -> Gf.Vec3d:
-        """단일 rotateXYZ로 'tiltX + yaw'를 합성."""
         if self._is_z_up:
-            # Z-up: XY 평면, yaw=Z, tilt=X
             return Gf.Vec3d(self._TILT_X_DEG, 0.0, yaw_deg)
         else:
-            # Y-up: XZ 평면, yaw=Y, tilt=X
             return Gf.Vec3d(self._TILT_X_DEG, yaw_deg, 0.0)
-
-    def _apply_pose_immediate(self, t_op, rxyz_op, s_op, u: float, v: float, yaw_deg: float):
-        """스냅모드/초기화 공용 즉시 적용 (TRS 순서 유지, 회전은 rotateXYZ 한 개)."""
-        rxyz_op.Set(self._compose_euler(yaw_deg))
-        vec = Gf.Vec3d(u, 0.0, v) if not self._is_z_up else Gf.Vec3d(u, v, 0.0)
-        t_op.Set(vec)
 
     # -------------------- data → targets --------------------
     def sync(self, items):
-        """서버에서 받은 배열(items)을 씬에 반영."""
         stage = self._stage
         items = items or []
         seen = set()
@@ -186,48 +160,25 @@ class Amr3D:
             path = self._amr_path(rid)
 
             prim = stage.GetPrimAtPath(path)
-            created = False
             if not prim:
                 prim = stage.DefinePrim(path, "Xform")
                 prim.GetReferences().AddReference("", self._proto_path)
                 prim.Load()
-                created = True
 
             t_op, rxyz_op, s_op = self._ops_cache.get(rid, (None, None, None))
             if t_op is None:
                 t_op, rxyz_op, s_op = self._ensure_ops(prim)
                 self._ops_cache[rid] = (t_op, rxyz_op, s_op)
-            else:
-            # 이미 존재하는 프림에도 스케일을 항상 강제 적용
-                try:
-                    s_op.Set(Gf.Vec3d(self._AMR_SCALE, self._AMR_SCALE, self._AMR_SCALE))
-                except Exception:
-                    pass
 
             u, v = self._map_to_units(it)
             yaw = self._norm_deg(self._YAW_SIGN * float(it.get("robotOrientation", 0.0)) + self._YAW_OFFSET)
 
-            # 최초값/신규 생성
-            if created or rid not in self._pos_cache:
-                self._pos_cache[rid] = (u, v)
-                self._yaw_cache[rid] = yaw
-                self._apply_pose_immediate(t_op, rxyz_op, s_op, u, v, yaw)
-                self._state[rid] = "idle"
-
-            if self._mode == "snap":
-                self._apply_pose_immediate(t_op, rxyz_op, s_op, u, v, yaw)
-                self._pos_cache[rid] = (u, v)
-                self._yaw_cache[rid] = yaw
-                self._targets.pop(rid, None)
-                self._state[rid] = "idle"
-            else:
-                self._targets[rid] = (u, v, yaw)
-                if self._mode == "turnmove":
-                    self._state[rid] = "turn"
+            # 목표만 갱신 (현재 위치는 update에서 보간)
+            self._targets[rid] = (u, v, yaw)
 
             seen.add(path)
 
-        # 존재하지 않는 로봇 정리(현재 그룹 기준)
+        # 존재하지 않는 로봇 제거
         parent = self._group or stage.GetPrimAtPath(self._group_path)
         for child in list(parent.GetChildren()):
             if child.GetPath().pathString not in seen:
@@ -237,12 +188,10 @@ class Amr3D:
                 self._pos_cache.pop(rid, None)
                 self._yaw_cache.pop(rid, None)
                 self._targets.pop(rid, None)
-                self._state.pop(rid, None)
 
     # -------------------- per-frame update --------------------
     def update(self, dt: Optional[float] = None):
-        # 스냅 모드면 할 일 없음
-        if self._mode == "snap" or not self._targets:
+        if not self._targets:
             self._last_tick = time.perf_counter()
             return
 
@@ -261,40 +210,23 @@ class Amr3D:
 
             cu, cv = self._pos_cache.get(rid, (tu, tv))
             cyaw   = self._yaw_cache.get(rid, tyaw)
-            state  = self._state.get(rid, "idle")
 
-            if self._mode == "lerp":
-                du, dv = (tu - cu), (tv - cv)
-                dist = math.hypot(du, dv)
-                if dist > 0.0:
-                    r = min(1.0, step_u / dist)
-                    cu, cv = (cu + du * r, cv + dv * r)
-                diff = ((tyaw - cyaw + 180.0) % 360.0) - 180.0
-                if abs(diff) > 0.0:
-                    cyaw += step_yaw if diff > 0 else -step_yaw
-                    cyaw = min(cyaw, tyaw) if diff > 0 else max(cyaw, tyaw)
+            # --- 위치: MoveTowards 방식 ---
+            du, dv = (tu - cu), (tv - cv)
+            dist = math.hypot(du, dv)
+            if dist > self._POS_EPS_UNITS:
+                angle = math.atan2(dv, du)
+                cu += math.cos(angle) * min(step_u, dist)
+                cv += math.sin(angle) * min(step_u, dist)
+            else:
+                cu, cv = tu, tv
 
-            elif self._mode == "turnmove":
-                if state == "turn":
-                    diff = ((tyaw - cyaw + 180.0) % 360.0) - 180.0
-                    if abs(diff) <= self._YAW_EPS_DEG:
-                        cyaw = tyaw
-                        state = "move"
-                    else:
-                        cyaw += step_yaw if diff > 0 else -step_yaw
-                    self._state[rid] = state
-
-                if state == "move":
-                    du, dv = (tu - cu), (tv - cv)
-                    dist = math.hypot(du, dv)
-                    if dist <= self._POS_EPS_UNITS or dist == 0.0:
-                        cu, cv = tu, tv
-                        state = "idle"
-                    else:
-                        r = min(1.0, step_u / dist)
-                        cu, cv = (cu + du * r, cv + dv * r)
-                    self._state[rid] = state
-                    cyaw = tyaw
+            # --- 회전: 부드러운 보간 ---
+            diff = ((tyaw - cyaw + 180.0) % 360.0) - 180.0
+            if abs(diff) > self._YAW_EPS_DEG:
+                cyaw += max(-step_yaw, min(step_yaw, diff))
+            else:
+                cyaw = tyaw
 
             # 적용
             rxyz_op.Set(self._compose_euler(cyaw))
@@ -303,52 +235,6 @@ class Amr3D:
 
             self._pos_cache[rid] = (cu, cv)
             self._yaw_cache[rid] = cyaw
-
-    # -------------------- anchoring --------------------
-    def set_anchor(self, anchor_path: str = "/World"):
-        """
-        AMR 그룹을 anchor_path 아래로 이동.
-        ex) "/World/t_floor" → "/World/t_floor/AMRs"
-        기본값 "/World"면 결과는 "/World/AMRs" (루트 유지).
-        """
-        stage = self._stage
-        anchor = stage.GetPrimAtPath(anchor_path)
-        if not anchor:
-            raise ValueError(f"Anchor prim not found: {anchor_path}")
-
-        old_path = self._group.GetPath().pathString
-        new_path = f"{anchor_path}/AMRs"
-
-        if old_path != new_path:
-            import omni.kit.commands as cmds
-            if stage.GetPrimAtPath(new_path):
-                stage.RemovePrim(new_path)
-            cmds.execute("MovePrim", path_from=old_path, path_to=new_path)
-            self._group = stage.GetPrimAtPath(new_path)
-            self._group_path = new_path
-
-            # 루트에 남은 옛 그룹이 있으면 정리
-            if stage.GetPrimAtPath("/World/AMRs") and new_path != "/World/AMRs":
-                stage.RemovePrim("/World/AMRs")
-
-        # 그룹은 아이덴티티 TRS + 부모 상속
-        gxf = UsdGeom.Xformable(self._group)
-        try:
-            gxf.SetResetXformStack(False)
-            gxf.ClearXformOpOrder()
-        except Exception:
-            pass
-        for p in list(self._group.GetProperties()):
-            if p.GetName().startswith("xformOp:"):
-                try:
-                    self._group.RemoveProperty(p.GetName())
-                except Exception:
-                    pass
-
-        gt = gxf.AddTranslateOp()
-        gr = gxf.AddRotateXYZOp()
-        gs = gxf.AddScaleOp()
-        gxf.SetXformOpOrder([gt, gr, gs])
-        gt.Set(Gf.Vec3d(0, 0, 0))
-        gr.Set(Gf.Vec3d(0, 0, 0))
-        gs.Set(Gf.Vec3d(1, 1, 1))
+    def set_mode(self, mode: str = "smooth"):
+        """호환성용 set_mode (smooth 이동만 지원)."""
+        self._mode = "smooth"  # 외부에서 어떤 값 주더라도 smooth 고정

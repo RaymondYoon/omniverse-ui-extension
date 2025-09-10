@@ -9,11 +9,28 @@ def build_top_bar(self):
     )
     with self._top_win.frame:
         with ui.HStack(height=40, padding=10, width=_fill()):
-            ui.Spacer()
+            # 왼쪽 상단 Automes + URL
+            with ui.VStack(width=200):  
+                ui.Label(
+                    "Automes",
+                    alignment=ui.Alignment.LEFT,
+                    style={"font_size": 16, "color": 0xFFFFFFFF},
+                )
+                ui.Label(
+                    "http://www.automes.co.kr",
+                    alignment=ui.Alignment.LEFT,
+                    style={"font_size": 12, "color": 0xFFFFFFFF},
+                )
+
+            ui.Spacer()  # 가운데 띄우기
+
+            # 가운데 제목
             ui.Label(
                 "Meta Factory v3.0",
                 alignment=ui.Alignment.CENTER,
                 style={"font_size": 20, "color": 0xFFFFFFFF},
-                width=300, word_wrap=True,
+                width=300,
+                word_wrap=True,
             )
-            ui.Spacer()
+
+            ui.Spacer()  # 오른쪽 빈 공간 확보

@@ -210,7 +210,7 @@ class AMRControlPanel:
 
     # ───────── Dispatch ─────────
     def _on_dispatch(self):
-        amr_id = (self._amr_id_str.as_string or "").strip()  # ★ 드롭다운의 "실제 값" 사용
+        amr_id = (self._amr_id_str.as_string or "").strip()  # 드롭다운의 "실제 값" 사용
         cmd = _COMMANDS[self._cmd_idx.get_value_as_int()]
         data_type = _DATATYPE_MAP.get(cmd, "ManualMove")
 

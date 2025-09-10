@@ -45,7 +45,7 @@ def build_bottom_bar(self):
     with self._bottom_win.frame:
         with ui.HStack(spacing=20, padding=10, width=_fill(), height=_fill()):
             ui.Spacer()
-            ui.Button("Simulation", height=40, style={"color": 0xFFFFFFFF})
+            ui.Button("AP area", height=40, style={"color": 0xFFFFFFFF})
             ui.Button("ChatBot",   height=40, style={"color": 0xFFFFFFFF})
             ui.Button(
                 "AMR Control",

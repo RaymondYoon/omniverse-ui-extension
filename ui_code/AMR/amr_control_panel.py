@@ -3,7 +3,7 @@ import re
 import omni.ui as ui
 from ui_code.ui.utils.common import _fill
 import json
-
+import inspect
 # 표시용 명령 목록과 서버 dataType 매핑
 _COMMANDS: List[str] = ["Move", "Rack Move", "Pause", "Resume", "Cancel"]
 _DATATYPE_MAP: Dict[str, str] = {
@@ -249,12 +249,12 @@ class AMRControlPanel:
         node = self._canon_node(node_in)
         mission = (self._mission.as_string or "").strip()
 
-        # 🔒 사전 유효성 검사
+        # 사전 유효성 검사
         if data_type == "ManualMove" and not node:
-            print("[AMRControl] ✋ Move에는 targetNodeCode가 필요합니다.")
+            print("[AMRControl] Move에는 targetNodeCode가 필요합니다.")
             return
         if data_type == "ManualRackMove" and (not cont or not node):
-            print("[AMRControl] ✋ Rack Move에는 containerCode와 targetNodeCode가 필요합니다.")
+            print("[AMRControl] Rack Move에는 containerCode와 targetNodeCode가 필요합니다.")
             return
 
         payload: Dict[str, Any] = {
@@ -301,7 +301,7 @@ class AMRControlPanel:
         val = self._amr_ids[idx] if 0 <= idx < len(self._amr_ids) else "-"
         if (self._amr_id_str.as_string or "") != val:
             self._amr_id_str.set_value(val)
-        print(f"[AMRControl] ▶ AMR changed: idx={idx}, val={val}")
+        print(f"[AMRControl] AMR changed: idx={idx}, val={val}")
 
     def _on_cmd_idx_changed(self, m):
         try:
@@ -309,7 +309,7 @@ class AMRControlPanel:
         except Exception:
             idx = 0
         label = _COMMANDS[idx] if 0 <= idx < len(_COMMANDS) else "Move"
-        print(f"[AMRControl] ▶ Command changed: idx={idx}, label={label}")
+        print(f"[AMRControl] Command changed: idx={idx}, label={label}")
         self._refresh_fields()
 
     # ───────── Close ─────────

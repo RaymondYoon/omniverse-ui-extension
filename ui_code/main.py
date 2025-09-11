@@ -99,10 +99,10 @@ class UiLayoutBase:
         build_bottom_bar(self)
 
         # 도킹
-        dock_window_in_window("Meta Factory v3.0", "Viewport", DockPosition.TOP, 0.05)
-        dock_window_in_window("AMR Information", "Viewport", DockPosition.LEFT, 0.20)
-        dock_window_in_window("Status Panel", "Viewport", DockPosition.RIGHT, 0.25)
-        dock_window_in_window("Bottom Bar", "Viewport", DockPosition.BOTTOM, 0.10)
+        dock_window_in_window("Meta Factory v3.0", "Viewport", DockPosition.TOP, 0.115)
+        dock_window_in_window("AMR Information", "Viewport", DockPosition.LEFT, 0.32)
+        dock_window_in_window("Status Panel", "Viewport", DockPosition.RIGHT, 0.30)
+        dock_window_in_window("Bottom Bar", "Viewport", DockPosition.BOTTOM, 0.11)
 
     # 상태 줄
     def _draw_status_line(self, label: str, is_connected: bool):

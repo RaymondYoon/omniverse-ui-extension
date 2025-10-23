@@ -1,21 +1,21 @@
-# amr_3d.py — real-time smooth sync for Omniverse
-# (서버 좌표는 목표점으로만 사용, 옴니버스에서는 매 프레임 부드럽게 보간 이동)
+# amr_3d.py — realtime smooth sync (no DebugDraw)
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Tuple
+import math, time, re
+from pxr import Sdf
 from pxr import UsdGeom, Gf
 import omni.usd
 import omni.kit.app as kit_app
 from ui_code.ui.utils.common import _file_uri
-import math, time
 
 
 class Amr3D:
     def __init__(self):
-        # 항상 부드럽게 이동 모드
+        # 이동 모드(항상 smooth)
         self._mode = "smooth"
 
-        # AMR 그룹 루트 경로
+        # 그룹 경로
         self._group_path = "/World/AMRs"
 
         # 좌표/축 보정
@@ -27,24 +27,28 @@ class Amr3D:
         self._OFFSET_U   = 0.0
         self._OFFSET_V   = 0.0
 
-        # 모션 파라미터 (속도 기반 이동)
-        self._MOVE_SPEED_MM_S = 900.0   # 0.6 m/s
-        self._YAW_SPEED_DPS   = 110.0    # 90 deg/s
+        # 모션 파라미터
+        self._MOVE_SPEED_MM_S = 1000    # mm/s
+        self._YAW_SPEED_DPS   = 180   # deg/s
         self._YAW_EPS_DEG     = 0.5
         self._POS_EPS_UNITS   = 0.01
 
         self._last_tick = time.perf_counter()
 
         # 캐시
-        self._ops_cache  = {}   # rid -> (t_op, rxyz_op, s_op)
-        self._pos_cache  = {}   # rid -> (u, v)
-        self._yaw_cache  = {}   # rid -> yaw
-        self._targets    = {}   # rid -> (tu, tv, tyaw)
+        self._ops_cache: Dict[str, Tuple] = {}  # rid -> (t_op, rxyz_op, s_op)
+        self._pos_cache: Dict[str, Tuple[float, float]] = {}
+        self._yaw_cache: Dict[str, float] = {}
+        self._targets:   Dict[str, Tuple[float, float, float]] = {}
 
-        self._AMR_SCALE = 0.2
+        self._AMR_SCALE = 0.3
         self._update_sub = None
 
-    # -------------------- lifecycle --------------------
+        # 디버그 로그 rate limit
+        self._dbg_last_log = 0.0
+        self._dbg_log_interval = 2.0  # 초
+
+    # ───────────────── lifecycle ─────────────────
     def init(self, amr_usd_path: str):
         self._ctx   = omni.usd.get_context()
         self._stage = self._ctx.get_stage() or (self._ctx.new_stage() or self._ctx.get_stage())
@@ -66,26 +70,32 @@ class Amr3D:
             proto.Load()
         self._proto = proto
 
+        try:
+            xf = UsdGeom.Xformable(self._proto)
+            s_op = xf.AddScaleOp()
+            s_op.Set(Gf.Vec3d(0.1, 0.1, 0.1))   # ← 여기가 핵심
+            print("[Amr3D] _AMR_proto scaled down (0.1x)")
+        except Exception as e:
+            print("[Amr3D] failed to scale proto:", e)
+
         # Stage 설정
         up = UsdGeom.GetStageUpAxis(self._stage)
         self._is_z_up = (up == UsdGeom.Tokens.z)
 
         meters_per_unit = UsdGeom.GetStageMetersPerUnit(self._stage) or 0.01
         units_per_meter = 1.0 / meters_per_unit
-        self._mm_to_units = units_per_meter / 1000.0
+        self._mm_to_units = units_per_meter / 1000.0   # mm → stage units
         self._POS_EPS_UNITS = 10.0 * self._mm_to_units
-
-        # 기본 틸트
         self._TILT_X_DEG = (90.0 if self._is_z_up else 0.0)
 
-        # 프레임 업데이트 구독
+        # per-frame 업데이트 구독
         if not self._update_sub:
             app = kit_app.get_app()
             self._update_sub = app.get_update_event_stream().create_subscription_to_pop(
                 lambda e: self.update()
             )
 
-    # -------------------- config --------------------
+    # ───────────────── config ─────────────────
     def set_config(self, *, tilt_x=None, yaw_sign=None, yaw_offset=None,
                    sign_v=None, scale_corr=None, offset_u=None, offset_v=None, amr_scale=None):
         if tilt_x     is not None: self._TILT_X_DEG = float(tilt_x)
@@ -104,7 +114,28 @@ class Amr3D:
         if yaw_eps_deg     is not None: self._YAW_EPS_DEG     = float(yaw_eps_deg)
         if pos_eps_mm      is not None: self._POS_EPS_UNITS   = float(pos_eps_mm) * self._mm_to_units
 
-    # -------------------- helpers --------------------
+    # ───────────────── helpers ─────────────────
+    @staticmethod
+    def _first_key(d: dict, *names):
+        for n in names:
+            if n in d and d[n] is not None:
+                return n
+        return None
+
+    @staticmethod
+    def _getf(d: dict, *names, default=0.0):
+        for n in names:
+            if n in d and d[n] is not None:
+                try:
+                    return float(d[n])
+                except Exception:
+                    pass
+        return float(default)
+
+    def _get_yaw_deg(self, it: dict) -> float:
+        raw = self._getf(it, "robotOrientation", "heading", "yaw", "theta", "angle", "orientationDeg", default=0.0)
+        return self._norm_deg(self._YAW_SIGN * raw + self._YAW_OFFSET)
+
     def _amr_path(self, rid: str) -> str:
         rid = "".join(c if (c.isalnum() or c == "_") else "_" for c in str(rid))
         if rid and rid[0].isdigit():
@@ -132,8 +163,9 @@ class Amr3D:
         return t_op, r_op, s_op
 
     def _map_to_units(self, it: dict):
-        x_mm = float(it.get("x", 0.0))
-        y_mm = float(it.get("y", 0.0))
+        # 다양한 키 지원 (서버/버전별 호환)
+        x_mm = self._getf(it, "x", "posX", "mapX", "positionX", "x_mm", "X", default=0.0)
+        y_mm = self._getf(it, "y", "posY", "mapY", "positionY", "y_mm", "Y", default=0.0)
         u = x_mm * self._mm_to_units * self._SCALE_CORR + self._OFFSET_U
         v = y_mm * self._mm_to_units * self._SCALE_CORR
         v = v * self._SIGN_V + self._OFFSET_V
@@ -149,7 +181,7 @@ class Amr3D:
         else:
             return Gf.Vec3d(self._TILT_X_DEG, yaw_deg, 0.0)
 
-    # -------------------- data → targets --------------------
+    # ───────────────── data → targets ─────────────────
     def sync(self, items):
         stage = self._stage
         items = items or []
@@ -159,7 +191,7 @@ class Amr3D:
             rid  = it.get("robotId") or it.get("amrId") or it.get("id") or f"{i+1}"
             path = self._amr_path(rid)
 
-            prim = stage.GetPrimAtPath(path)
+            prim = stage.GetPrimAtPath(Sdf.Path(path))
             if not prim:
                 prim = stage.DefinePrim(path, "Xform")
                 prim.GetReferences().AddReference("", self._proto_path)
@@ -171,15 +203,14 @@ class Amr3D:
                 self._ops_cache[rid] = (t_op, rxyz_op, s_op)
 
             u, v = self._map_to_units(it)
-            yaw = self._norm_deg(self._YAW_SIGN * float(it.get("robotOrientation", 0.0)) + self._YAW_OFFSET)
+            yaw = self._get_yaw_deg(it)
 
-            # 목표만 갱신 (현재 위치는 update에서 보간)
+            # 목표만 갱신
             self._targets[rid] = (u, v, yaw)
-
             seen.add(path)
 
-        # 존재하지 않는 로봇 제거
-        parent = self._group or stage.GetPrimAtPath(self._group_path)
+        # 누락된 로봇 제거
+        parent = self._group or stage.GetPrimAtPath(Sdf.Path(self._group_path))
         for child in list(parent.GetChildren()):
             if child.GetPath().pathString not in seen:
                 stage.RemovePrim(child.GetPath())
@@ -189,7 +220,21 @@ class Amr3D:
                 self._yaw_cache.pop(rid, None)
                 self._targets.pop(rid, None)
 
-    # -------------------- per-frame update --------------------
+        # ── Debug: 주기적으로 1개 샘플 로그
+        if items and (time.perf_counter() - self._dbg_last_log) > self._dbg_log_interval:
+            it0 = items[0]
+            raw_x = self._getf(it0, "x", "posX", "mapX", "positionX", "x_mm", "X")
+            raw_y = self._getf(it0, "y", "posY", "mapY", "positionY", "y_mm", "Y")
+            raw_yaw = self._getf(it0, "robotOrientation", "heading", "yaw", "theta", "angle", "orientationDeg")
+            u0, v0 = self._map_to_units(it0)
+            yaw0 = self._get_yaw_deg(it0)
+            # print(f"[Amr3D.sync] sample rid={it0.get('robotId') or it0.get('amrId') or '-'} "
+            #       f"raw(x,y,yaw)=({raw_x:.1f}mm,{raw_y:.1f}mm,{raw_yaw:.1f}°) "
+            #       f"→ mapped(u,v,yaw)=({u0:.3f},{v0:.3f},{yaw0:.1f}°), mm_to_units={self._mm_to_units:.6f}, "
+            #       f"SCALE_CORR={self._SCALE_CORR}, OFFSET=({self._OFFSET_U},{self._OFFSET_V}), SIGN_V={self._SIGN_V}")
+            self._dbg_last_log = time.perf_counter()
+
+    # ───────────────── per-frame update ─────────────────
     def update(self, dt: Optional[float] = None):
         if not self._targets:
             self._last_tick = time.perf_counter()
@@ -211,7 +256,7 @@ class Amr3D:
             cu, cv = self._pos_cache.get(rid, (tu, tv))
             cyaw   = self._yaw_cache.get(rid, tyaw)
 
-            # --- 위치: MoveTowards 방식 ---
+            # 위치 보간
             du, dv = (tu - cu), (tv - cv)
             dist = math.hypot(du, dv)
             if dist > self._POS_EPS_UNITS:
@@ -221,7 +266,7 @@ class Amr3D:
             else:
                 cu, cv = tu, tv
 
-            # --- 회전: 부드러운 보간 ---
+            # 회전 보간
             diff = ((tyaw - cyaw + 180.0) % 360.0) - 180.0
             if abs(diff) > self._YAW_EPS_DEG:
                 cyaw += max(-step_yaw, min(step_yaw, diff))
@@ -235,6 +280,6 @@ class Amr3D:
 
             self._pos_cache[rid] = (cu, cv)
             self._yaw_cache[rid] = cyaw
+
     def set_mode(self, mode: str = "smooth"):
-        """호환성용 set_mode (smooth 이동만 지원)."""
-        self._mode = "smooth"  # 외부에서 어떤 값 주더라도 smooth 고정
+        self._mode = "smooth"

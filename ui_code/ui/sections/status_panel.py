@@ -11,7 +11,7 @@ _FIELD_STYLE = {
 }
 
 # 도넛 설정
-_DONUT_SIZE   = 110
+_DONUT_SIZE   = 80
 _INNER_RATIO  = 0.75
 _GAP_DEG      = 2.0
 _COLORS       = [
@@ -28,17 +28,6 @@ def build_status_panel(self):
         flags=ui.WINDOW_FLAGS_NO_MOVE | ui.WINDOW_FLAGS_NO_RESIZE | ui.WINDOW_FLAGS_NO_COLLAPSE,
         style={"background_color": 0x000000A0},
     )
-
-    with self._status_win.frame:
-        with ui.HStack(width=_fill(), height=_fill()):
-            with ui.Frame(width=350, height=_fill(), style={"background_color": 0x000000A0}):
-                with ui.VStack(spacing=8, padding=10, width=_fill()):
-                    ui.Label("Equipment Status", style={"font_size": 18, "color": 0xFFFFFFFF},
-                             word_wrap=True, width=_fill())
-                    ui.Separator()
-                    ui.Spacer(height=8)
-            ui.Spacer(width=_fill())
-
     self._amr_donut_provider = ui.ByteImageProvider()
     self._amr_donut_center_label = None
 
@@ -46,11 +35,11 @@ def build_status_panel(self):
         with ui.ScrollingFrame(style={"background_color": 0x000000A0}, width=_fill(), height=_fill()):
             with ui.Frame(clip=True, width=_fill(), height=_fill()):
                 with ui.VStack(spacing=8, padding=10, width=_fill()):
-                    ui.Label("Equipment Status", style={"font_size": 18, "color": 0xFFFFFFFF},
+                    ui.Label("Equipment Status", style={"font_size": 16, "color": 0xFFFFFFFF},
                              word_wrap=True, width=_fill())
-                    ui.Separator()
+                    ui.Separator(height=1)
 
-                    ui.Label("AMR Status", style={"font_size": 16, "color": 0xFFFFFFFF},
+                    ui.Label("AMR Status", style={"font_size": 14, "color": 0xFFFFFFFF},
                              word_wrap=True, width=_fill())
 
                     with ui.HStack(spacing=8, width=_fill()):
@@ -59,7 +48,7 @@ def build_status_panel(self):
                                                  width=_DONUT_SIZE, height=_DONUT_SIZE)
                             self._amr_donut_center_label = ui.Label(
                                 "0", alignment=ui.Alignment.CENTER,
-                                style={"font_size": 20, "color": 0xFFFFFFFF},
+                                style={"font_size": 14, "color": 0xFFFFFFFF},
                                 width=_DONUT_SIZE, height=_DONUT_SIZE,
                             )
 
@@ -97,7 +86,7 @@ def build_status_panel(self):
 
                     def _draw_donut(total: int, working: int, waiting: int, charging: int):
                         if self._amr_donut_center_label:
-                            self._amr_donut_center_label.text = str(int(waiting))
+                            self._amr_donut_center_label.text = str(int(waiting)+int(charging)+int(working))
 
                         s = max(working, 0) + max(waiting, 0) + max(charging, 0)
                         ratios = [0.0, 0.0, 0.0] if s == 0 else [working/s, waiting/s, charging/s]
@@ -157,50 +146,48 @@ def build_status_panel(self):
                     _draw_donut(total=5, working=0, waiting=3, charging=1)
                     _refresh_from_models()
 
-                    ui.Separator()
+                    ui.Separator(height=1)
 
                     # ───────── Pallet List ─────────
                     self._section_header_with_button("Pallet List", self._open_container_panel, btn_text="+")
-                    with ui.VStack(spacing=3, width=_fill()):
+                    with ui.VStack(spacing=1, width=_fill()):
                         with ui.HStack(width=_fill()):
-                            ui.Label("-", width=14, style={"color": 0xFFFFFFFF})
+                            ui.Label("-", width=6, height=1, style={"color": 0xFFFFFFFF})
                             self._text(self.m_pallet_total, _FIELD_STYLE)
-                        with ui.HStack(width=_fill()):
-                            ui.Label("-", width=14, style={"color": 0xFFCCCCCC})
+                            ui.Label("-", width=6, height=1, style={"color": 0xFFCCCCCC})
                             self._text(self.m_pallet_offmap, _FIELD_STYLE)
                         with ui.HStack(width=_fill()):
-                            ui.Label("-", width=14, style={"color": 0xFFFFAA00})
+                            ui.Label("-", width=6, height=1, style={"color": 0xFFFFAA00})
                             self._text(self.m_pallet_stationary, _FIELD_STYLE)
-                        with ui.HStack(width=_fill()):
-                            ui.Label("-", width=14, style={"color": 0xFF007BFF})
+                            ui.Label("-", width=6, height=1, style={"color": 0xFF007BFF})
                             self._text(self.m_pallet_inhandling, _FIELD_STYLE)
 
-                    ui.Separator()
+                    ui.Separator(height=1)
 
                     # ───────── Mission List ─────────
                     self._section_header_with_button("Mission List", self._open_mission_panel, btn_text="+")
-                    with ui.VStack(spacing=3, width=_fill()):
+                    with ui.VStack(spacing=1, width=_fill()):
                         with ui.HStack(width=_fill()):
-                            ui.Label("-", width=14, style={"color": 0xFFFFFFFF})  # Total
+                            ui.Label("-", width=6, style={"color": 0xFFFFFFFF})  # Total
                             self._text(self.m_mission_total, _FIELD_STYLE)
-                        with ui.HStack(width=_fill()):
-                            ui.Label("-", width=14, style={"color": 0xFFFFAA00})  # Working
+                       
+                            ui.Label("-", width=6, style={"color": 0xFFFFAA00})  # Working
                             self._text(self.m_mission_working, _FIELD_STYLE)
                         with ui.HStack(width=_fill()):
-                            ui.Label("-", width=14, style={"color": 0xFF007BFF})  # Waiting
+                            ui.Label("-", width=6, style={"color": 0xFF007BFF})  # Waiting
                             self._text(self.m_mission_waiting, _FIELD_STYLE)
-                        with ui.HStack(width=_fill()):
-                            ui.Label("-", width=14, style={"color": 0xFFFFFFFF})  # Reserved
+                        
+                            ui.Label("-", width=6, style={"color": 0xFFFFFFFF})  # Reserved
                             self._text(self.m_mission_reserved, _FIELD_STYLE)
 
-                    ui.Separator(width=_fill())
+                    ui.Separator(height=1, width=_fill())
 
                     # ───────── Error Log ─────────
                     ui.Label("Error Log", style={"font_size": 16, "color": 0xFFFFFFFF}, word_wrap=True, width=_fill())
-                    with ui.Frame(height=140, width=_fill()):
+                    with ui.Frame(height=70, width=_fill()):
                         with ui.VStack(width=_fill()) as v:
                             self._error_vstack = v
-                    ui.Separator()
+                    ui.Separator(height=1)
 
                     # ───────── Connection Status ─────────
                     ui.Label("Connection Status", style={"font_size": 16, "color": 0xFFFFFFFF}, word_wrap=True, width=_fill())

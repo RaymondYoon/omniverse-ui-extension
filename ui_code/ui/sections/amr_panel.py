@@ -15,7 +15,7 @@ def build_amr_panel(self):
     with self._amr_win.frame:
         # 전체를 HStack으로 깔고 왼쪽만 고정 폭
         with ui.HStack(height=_fill(), width=_fill()):
-            with ui.VStack(width=350):  # ← 여기서 폭 강제
+            with ui.VStack(width=170):  # ← 여기서 폭 강제
                 with ui.ScrollingFrame(
                     style={"background_color": 0x00000000},
                     height=_fill(),

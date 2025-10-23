@@ -12,85 +12,116 @@ class AmrCard:
         self.m_lift   = ui.SimpleStringModel("-")
         self.m_rack   = ui.SimpleStringModel("-")
         self.m_wtype  = ui.SimpleStringModel("-")
-        # ProgressBar 기본 범위(0~1). 명시적으로 min/max 지정
+        # 배터리(0~1)
         self.m_batt   = ui.SimpleFloatModel(0.0, min=0.0, max=1.0)
 
         with parent_vstack:
-            self._root = ui.Frame(style={"background_color": 0x00000080}, height=170, width=_fill())
+            self._root = ui.Frame(style={"background_color": 0x00000080}, height=120, width=_fill())
         with self._root:
             with ui.VStack(spacing=6, padding=8, width=_fill()):
-                # 헤더
+                # ── 헤더 ──
                 with ui.HStack(width=_fill(), height=24):
-                    ui.Label(f"AMR ID : {self.amr_id}",
-                             style={"font_size": 18, "color": 0xFFFFFFFF},
-                             width=_fill())
-                    ui.Button("+", width=24, height=22, style={"color": 0xFFFFFFFF},
+                    ui.Label(
+                        f"AMR ID : {self.amr_id}",
+                        style={"font_size": 14, "color": 0xFFFFFFFF},
+                        width=_fill()
+                    )
+                    ui.Button("+", width=14, height=12, style={"color": 0xFFFFFFFF},
                               clicked_fn=self._handle_plus)
 
-                # 본문
+                # ── 본문 ──
                 with ui.HStack(spacing=10, width=_fill()):
-                    with ui.Frame(width=120, height=90, style={"background_color": 0x222222FF}):
+                    # 썸네일
+                    with ui.Frame(width=60, height=40, style={"background_color": 0x222222FF}):
                         try:
-                            candidates = [ASSET_DIR / "amr.png", ASSET_DIR / "amr.PNG",
-                                          ASSET_DIR / "AMR.png", ASSET_DIR / "AMR.PNG"]
+                            candidates = [ASSET_DIR / "amr.PNG"]
                             img_path = next((p for p in candidates if p.exists()), None)
                             if img_path:
-                                ui.Image(img_path.as_posix(), width=_fill(), height=_fill(),
-                                         fill_policy=ui.FillPolicy.PRESERVE_ASPECT_FIT)
+                                ui.Image(
+                                    img_path.as_posix(),
+                                    width=_fill(),
+                                    height=_fill(),
+                                    fill_policy=ui.FillPolicy.PRESERVE_ASPECT_FIT
+                                )
                             else:
                                 ui.Label("IMG", alignment=ui.Alignment.CENTER, style={"color": 0xFFFFFFFF})
                         except Exception:
                             ui.Label("IMG", alignment=ui.Alignment.CENTER, style={"color": 0xFFFFFFFF})
 
-                    with ui.VStack(spacing=4, width=_fill()):
-                        self._kv("Status :",      self.m_status)
-                        self._kv("Lift Status :", self.m_lift)
-                        self._kv("Rack :",        self.m_rack)
-                        self._kv("Working Type :",self.m_wtype)
+                    # 키-값 영역
+                    with ui.VStack(spacing=1, width=_fill()):
+                        self._kv("Status :",      self.m_status, font_size=8)
+                        self._kv("Lift Status :", self.m_lift,   font_size=8)
+                        self._kv("Rack :",        self.m_rack,   font_size=8)
+                        self._kv("Working Type :",self.m_wtype,  font_size=8)
 
-                # ── 배터리 바 ──
-                # 문서처럼 set_style 사용. 트랙(배경) 색도 살짝 어둡게.
-                self._bbar = ui.ProgressBar(model=self.m_batt, width=_fill(), height=26)
-                self._apply_progress_style({"background_color": 0x803C3C3C})
+                # ── 배터리 바 (커스텀: 두께/텍스트 완전 제어) ──
+                # 높이는 여기의 height로 정확히 반영됨
+                with ui.ZStack(width=_fill(), height=2):
+                    # 트랙(배경)
+                    ui.Rectangle(width=_fill(), height=_fill(),
+                                 style={"background_color": 0x803C3C3C})
 
-                # 값 바뀌면 색 갱신 + 초기 1회 적용
-                self.m_batt.add_value_changed_fn(lambda *_: self._sync_batt_color())
-                self._sync_batt_color()
+                    # 채워지는 바
+                    with ui.HStack(width=_fill(), height=_fill()):
+                        self._batt_fill = ui.Rectangle(
+                            height=_fill(),
+                            width=ui.Percent(0),
+                            style={"background_color": 0x80800000}  # 초기색(>=70% 가정)
+                        )
+                        ui.Spacer(width=_fill())
 
-    # 진행바 색: <20% 빨강, 20~70% 주황, ≥70% 초록 (ABGR)
-    def _sync_batt_color(self):
-        v = float(self.m_batt.as_float)
-        RED     = 0xFF0000FF  # R=FF
-        ORANGE  = 0xFF00AAFF  # R=FF, G=AA
-        GREEN   = 0xFF00FF00  # G=FF
+                    # 텍스트(우측 정렬, 소수 0자리 = 정수부만)
+                    with ui.HStack(width=_fill(), height=_fill()):
+                        ui.Spacer(width=_fill())
+                        self._batt_text = ui.Label(
+                            "0",
+                            style={"color": 0xFFFFFFFF, "font_size": 10}
+                        )
 
-        if   v >= 0.70: color = GREEN
-        elif v >= 0.20: color = ORANGE
-        else:            color = RED
+                # 값 변경 시 색/폭/텍스트 동기화 + 초기 1회
+                self.m_batt.add_value_changed_fn(self._on_batt_changed)
+                self._on_batt_changed()
 
-        # 문서 방식 → 폴백 순서대로 적용
-        self._apply_progress_style({"color": color})
+    # ───────────────────────── helpers ─────────────────────────
+    def _fmt_ratio_int(self, v: float) -> str:
+    # 0~1 → 0~100 정수(반올림). % 기호는 붙이지 않음.
+        v = max(0.0, min(1.0, float(v)))
+        return str(int(round(v * 100.0)))
 
-    def _apply_progress_style(self, base: dict):
-        """Kit 버전별 스타일 키 차이에 대비해 안전하게 적용."""
-        # 1) 공식 문서 방식
+    def _sync_batt_color_and_fill(self):
+        # 색상: <20% 빨강, 20~70% 주황, ≥70% 파랑(기존 상수 유지)
         try:
-            self._bbar.set_style(base)
-            return
+            v = float(self.m_batt.as_float)
+        except Exception:
+            v = 0.0
+        v = max(0.0, min(1.0, v))
+
+        if   v >= 0.70: col = 0x80800000  # BLUE (ABGR 주석 그대로 유지)
+        elif v >= 0.20: col = 0xFF00AAFF  # ORANGE
+        else:           col = 0xFF0000FF  # RED
+
+        try:
+            self._batt_fill.set_style({"background_color": col})
+        except Exception:
+            self._batt_fill.style = {"background_color": col}
+
+        try:
+            self._batt_fill.width = ui.Percent(int(v * 100))
         except Exception:
             pass
-        # 2) 대체 키 시도
-        for k in ("secondary_color", "bar_color", "color"):
-            try:
-                st = dict(getattr(self._bbar, "style", {}))
-                st.update(base)
-                # color 키가 없으면 대체 키로 넣어줌
-                if "color" not in base:
-                    st[k] = base.get(k, base.get("color"))
-                self._bbar.style = st
-                return
-            except Exception:
-                continue
+
+    def _sync_batt_text(self):
+        try:
+            v = float(self.m_batt.as_float)
+        except Exception:
+            v = 0.0
+        v = max(0.0, min(1.0, v))
+        self._batt_text.text = self._fmt_ratio_int(v)
+
+    def _on_batt_changed(self, *_):
+        self._sync_batt_color_and_fill()
+        self._sync_batt_text()
 
     def _handle_plus(self):
         try:
@@ -99,11 +130,14 @@ class AmrCard:
         except Exception as e:
             print("[AmrCard] on_plus failed:", e)
 
-    def _kv(self, key, model):
+    def _kv(self, key, model, font_size=12):
         with ui.HStack(width=_fill()):
-            ui.Label(key, width=120, style={"color": 0xFFFFFFFF})
-            ui.StringField(model=model, read_only=True, style={"color": 0xFFFFFFFF}, width=_fill())
+            ui.Label(key, width=_fill(), style={"color": 0xFFFFFFFF, "font_size": font_size})
+            ui.StringField(model=model, read_only=True,
+                           style={"color": 0xFFFFFFFF, "font_size": font_size},
+                           width=_fill())
 
+    # ───────────────────────── public ──────────────────────────
     def update(self, src: Dict[str, Any]):
         def g(*keys, default=None):
             for k in keys:
@@ -120,18 +154,15 @@ class AmrCard:
             w = "Waiting" if bool(g("isWaiting")) else "-"
         self.m_wtype.set_value(str(w))
 
-        batt = g("batteryLevel", "battery", "batteryPercent") or 0
+        batt = g("batteryLevel") or 0
         try:
             batt = float(batt)
         except Exception:
             batt = 0.0
-        if batt > 1.0:
+        if batt > 1.0:  # 0~100 → 0~1 보정
             batt /= 100.0
         batt = max(0.0, min(1.0, batt))
-        self.m_batt.set_value(batt)
-
-        # 같은 값으로 반복 업데이트될 때를 대비해 한 번 더 색 적용
-        self._sync_batt_color()
+        self.m_batt.set_value(batt)  # 콜백 통해 색/폭/텍스트 동기화
 
     def destroy(self):
         try:

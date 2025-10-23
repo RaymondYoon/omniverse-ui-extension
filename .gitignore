@@ -20,3 +20,6 @@ __pycache__/
 
 # Temporary / Hash file
 SHA256
+
+platform_ext/config/Network.json
+**/config/Network.json

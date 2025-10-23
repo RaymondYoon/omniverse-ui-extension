@@ -17,3 +17,7 @@ modules = ["requests"]
 [python]
 [[python.module]]
 name = "ui_code"
+
+[[resources]]
+name = "fonts"
+path = "fonts"

@@ -68,8 +68,9 @@ class AMRPanel:
                         with ui.HStack(width=_fill()):
                             ui.Label("AMR ID :", width=70, style={"color": _COL_TEXT})
                             ui.StringField(model=self._selected_id, read_only=True,
-                                           style={"color": _COL_TEXT}, width=_fill())
-                        with ui.HStack(spacing=6, width=_fill()):
+                                           style={"color": _COL_TEXT}, width=_fill(), height=60)
+                        ui.Separator(height=4)
+                        with ui.HStack(spacing=6, height=4,width=_fill()):
                             self._status_dot = ui.Label("-", width=14,
                                                         style={"color": _COL_DOT_WAITING, "font_size": 16})
                             ui.StringField(model=self._m_status, read_only=True,
@@ -149,7 +150,7 @@ class AMRPanel:
                     return data[k]
             return default
 
-        rid = g("robotId", "amrId", "id", "name")
+        rid = g("robotId", "amrId")
         if rid:
             self._selected_id.set_value(str(rid))
 

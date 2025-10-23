@@ -35,11 +35,11 @@ class UiLayoutBase:
                 w.visible = False
 
     def _text(self, model: ui.SimpleStringModel, style: dict):
-        return ui.StringField(model=model, read_only=True, style=style, width=_fill())
+        return ui.StringField(model=model, read_only=True, style={"font_size": 10, "color": 0xFFFFFFFF}, width=_fill())
 
     def _section_header_with_button(self, title: str, on_click, btn_text: str = "+"):
         with ui.HStack(spacing=6, width=_fill(), height=24):
-            ui.Label(title, style={"font_size": 16, "color": 0xFFFFFFFF}, width=_fill())
+            ui.Label(title, style={"font_size": 14, "color": 0xFFFFFFFF}, width=_fill())
             ui.Button(btn_text, width=24, height=22, style={"color": 0xFFFFFFFF}, clicked_fn=on_click)
 
     # ───────────────────────── lifecycle ───────────────────────
@@ -99,10 +99,10 @@ class UiLayoutBase:
         build_bottom_bar(self)
 
         # 도킹
-        dock_window_in_window("Meta Factory v3.0", "Viewport", DockPosition.TOP, 0.115)
-        dock_window_in_window("AMR Information", "Viewport", DockPosition.LEFT, 0.32)
-        dock_window_in_window("Status Panel", "Viewport", DockPosition.RIGHT, 0.30)
-        dock_window_in_window("Bottom Bar", "Viewport", DockPosition.BOTTOM, 0.11)
+        dock_window_in_window("Meta Factory v3.0", "Viewport", DockPosition.TOP, 0.07)
+        dock_window_in_window("AMR Information", "Viewport", DockPosition.LEFT, 0.09)
+        dock_window_in_window("Status Panel", "Viewport", DockPosition.RIGHT, 0.12)
+        dock_window_in_window("Bottom Bar", "Viewport", DockPosition.BOTTOM, 0.08)
 
     # 상태 줄
     def _draw_status_line(self, label: str, is_connected: bool):
@@ -163,25 +163,38 @@ class UiLayoutBase:
         if not v:
             return
 
-        now = time.time()
-        if self._err_last == text and (now - self._err_last_time) < self._err_merge_sec and self._error_models:
-            self._err_last_time = now
-            self._err_last_count = min(5, self._err_last_count + 1)
-            suffix = f" (x{self._err_last_count})" if self._err_last_count > 1 else ""
-            self._error_models[-1].set_value(f"[Error] {text}{suffix}")
-            return
+        # 새 텍스트에서 AMR ID 추출: "10002, noError-charging" -> "10002"
+        def _rid_from_text(s: str) -> str:
+            s = (s or "").strip()
+            # "[Error] 10002, ..." 형태도 대비
+            if s.startswith("[Error]"):
+                s = s[len("[Error]"):].strip()
+            return s.split(",", 1)[0].strip()
 
-        self._err_last = text
-        self._err_last_time = now
-        self._err_last_count = 1
+        new_rid = _rid_from_text(text)
 
+        # 0) 같은 AMR ID가 이미 화면에 있으면 그 줄만 갱신하고 끝
+        for model in self._error_models:
+            cur = model.as_string  # "[Error] 10002, ...."
+            cur_rid = _rid_from_text(cur)
+            if cur_rid == new_rid:
+                model.set_value(f"[Error] {text}")  # 같은 줄 덮어쓰기
+                return
+
+        # 1) 동일한 전체 텍스트가 이미 있으면 무시
+        for model in self._error_models:
+            if model.as_string == f"[Error] {text}":
+                return
+
+        # 2) 아직 5줄 미만이면 새 줄 추가
         if len(self._error_models) < 5:
             model = ui.SimpleStringModel(f"[Error] {text}")
             self._error_models.append(model)
             with self._error_vstack:
-                ui.StringField(model=model, read_only=True, style={"color": 0xFFFFFFFF}, width=_fill())
+                ui.StringField(model=model, read_only=True, style={"font_size": 10, "color": 0xFFFFFFFF}, width=_fill())
             return
 
+        # 3) 5줄 이미 꽉 찼다면 위로 한 칸씩 밀고 마지막 줄을 새 값으로 교체
         for i in range(4):
             self._error_models[i].set_value(self._error_models[i + 1].as_string)
         self._error_models[-1].set_value(f"[Error] {text}")

@@ -129,7 +129,6 @@ def _set_albedo_on_look(stage, look_path: str, rgb: tuple) -> bool:
         inp = shader.GetInput(name)
         if inp:
             found = inp
-            print(f"[Color] found '{name}' on {shader.GetPath()}")
             break
 
     if not found:
@@ -138,7 +137,6 @@ def _set_albedo_on_look(stage, look_path: str, rgb: tuple) -> bool:
 
     prev = found.Get()
     found.Set(Gf.Vec3f(*rgb))
-    print(f"[Color] {look_path}.{found.GetBaseName()}: {prev} -> {rgb}")
     return True
 
 def _colorize_car(stage, car_path: str, looks_names: List[str], *, single_color_per_car: bool = True):
@@ -241,7 +239,7 @@ class LineCarSpawner:
         end_x: float = 6550,
         lane_y: float = 2738.0,
         lane_z: float = 0.0,
-        speed: float = 200,
+        speed: float = 50,
         count: int = 19,
         spacing: float = 600.0,          # x축 간격
         mode: str = "loop",              # "loop" | "respawn"
@@ -395,9 +393,11 @@ class LineCarSpawner:
         self._cars.clear()
 
         # count 대를 spacing 간격으로 배치
+        offset = self._dir * self.spacing  # 이동 방향 기준 spacing
         for i in range(self.count):
-            x0 = self.start_x - self._dir * self.spacing * i
+            x0 = self.end_x - offset * i
             self._spawn_one(f"Car_{i+1:03d}", x0)
+
 
         print(f"[LineCar] spawned {self.count} cars (mode={self.mode}, spacing={self.spacing}) under {self.parent_path}")
 

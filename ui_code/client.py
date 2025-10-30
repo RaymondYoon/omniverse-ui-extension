@@ -4,6 +4,8 @@
 import threading
 import time
 import logging
+import json
+import os
 from typing import Callable, Optional, Dict, Any, List
 
 import requests
@@ -26,37 +28,59 @@ class DataType:
 
 
 class DigitalTwinClient:
-    """
-    Lightweight client for polling your Operation Server's /DigitalTwin endpoint and
-    emitting Unity-style events (AliveChange, Request, Response, ErrorOccurred).
-
-    Usage:
-        client = DigitalTwinClient()
-        client.add_on_response(lambda ep, req, res: print("Response:", res))
-        client.start(map_code="RR_Floor")   # begin polling ConnectionInfo -> fan-out
-        ...
-        client.stop()
-    """
 
     def __init__(
         self,
-        base_url: str = "http://172.16.110.67:49000/",
+        base_url: Optional[str] = None,   # ← 인자로 주면 우선, 없으면 Network.json 사용
         timeout: float = 5.0,
         interval: float = 0.5,
     ):
+        # ─────────────────────────────────────────────────────────────────
+        # Load from Network.json (하드코딩 제거)
+        # ─────────────────────────────────────────────────────────────────
+        config_path = r"C:\omniverse_exts\platform_ext\config\Network.json"
+        cfg_base_url = None
+        cfg_map_code = "DEFAULT_MAP"
+
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+
+                ip = cfg.get("opServerIP", "127.0.0.1")
+                port = cfg.get("opServerPort", 49000)
+                https = cfg.get("https", False)
+                scheme = "https" if https else "http"
+
+                cfg_base_url = cfg.get("baseUrl") or f"{scheme}://{ip}:{port}/"
+                cfg_map_code = cfg.get("mapCode", "DEFAULT_MAP")
+
+                logging.info(f"[Config] Loaded from {config_path}")
+                logging.info(f"[Config] base_url={cfg_base_url}, map_code={cfg_map_code}")
+            except Exception as e:
+                logging.warning(f"[Config] Failed to read {config_path}: {e}")
+        else:
+            logging.warning(f"[Config] Network.json not found at {config_path}")
+
+        # base_url 우선순위: 인자 > Network.json > 로컬 기본값
+        effective_base_url = base_url or cfg_base_url or "http://127.0.0.1:49000/"
+
+        # ─────────────────────────────────────────────────────────────────
         # Base config
-        self._base_url = base_url.rstrip("/") + "/"
+        # ─────────────────────────────────────────────────────────────────
+        self._base_url = effective_base_url.rstrip("/") + "/"
         self._timeout = timeout
         self._interval = max(0.05, float(interval))
 
         # State
         self.is_alive: bool = False
-        self._alive_lock = threading.Lock()
+        self._lock = threading.Lock()
 
         # Threading
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
-        self._map_code: str = "RR_Floor"
+
+        self._map_code: str = cfg_map_code
 
         # Callbacks
         self._on_alive_change: List[Callable[[bool], None]] = []
@@ -67,6 +91,8 @@ class DigitalTwinClient:
         self._on_error: List[
             Callable[[Exception, Optional[str], Optional[Dict[str, Any]]], None]
         ] = []
+
+        logging.info(f"[DigitalTwinClient] Initialized (base_url={self._base_url}, map_code={self._map_code})")
 
     # ─────────────────────────────────────────────────────────────────────────────
     # Public API
@@ -79,17 +105,21 @@ class DigitalTwinClient:
     def set_base_url(self, url: str) -> None:
         self._base_url = url.rstrip("/") + "/"
 
-    def start(self, map_code: str = "RR_Floor") -> None:
+    def start(self, map_code: Optional[str] = None) -> None:
         """Start background polling loop (ConnectionInfo → fan-out)."""
         if self._thread and self._thread.is_alive():
             return
-        self._map_code = map_code
+
+        # 호출자가 명시적으로 준 경우에만 덮어쓰기. None이면 Network.json 값 유지
+        if map_code is not None:
+            self._map_code = map_code
+
         self._stop_event.clear()
         self._thread = threading.Thread(
             target=self._poll_loop, name="DigitalTwinPoller", daemon=True
         )
         self._thread.start()
-        logging.info("Polling loop started (map_code=%s, interval=%.2fs)", map_code, self._interval)
+        logging.info("Polling loop started (map_code=%s, interval=%.2fs)", self._map_code, self._interval)
 
     def stop(self) -> None:
         """Stop background polling loop."""
@@ -223,7 +253,7 @@ class DigitalTwinClient:
         self.post_digital_twin(payload)
 
     def _set_alive(self, alive: bool) -> None:
-        with self._alive_lock:
+        with self._lock:
             if self.is_alive != alive:
                 self.is_alive = alive
                 self._emit_on_alive_change(alive)
@@ -270,7 +300,7 @@ class DigitalTwinClient:
     # ─────────────────────────────────────────────────────────────────────────────
 
     def __enter__(self):
-        self.start(self._map_code)
+        self.start()
         return self
 
     def __exit__(self, exc_type, exc, tb):

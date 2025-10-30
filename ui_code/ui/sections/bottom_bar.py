@@ -3,7 +3,7 @@ from ui_code.ui.utils.common import _fill
 from ui_code.AMR.amr_control_panel import AMRControlPanel
 from ui_code.Chatbot.chatbot_panel import ChatbotPanel, ChatAdapter
 from ui_code.AMR.amr_pathfinder_panel import PathFinderPanel
-from ui_code.ui.sections.body_data_panel import BodyDataPanel  # ✅ 경로 수정됨
+from ui_code.ui.sections.body_data_panel import BodyDataPanel
 
 def build_bottom_bar(self):
     self._init_mode_state()
@@ -63,8 +63,6 @@ def build_bottom_bar(self):
             ui.Button("ChatBot", height=30, style={"color": 0xFFFFFFFF}, clicked_fn=_open_chatbot_panel)
             ui.Button("AMR Control", height=30, style={"color": 0xFFFFFFFF}, clicked_fn=_open_amr_control_panel)
             ui.Button("Path Finder", height=30, style={"color": 0xFFFFFFFF}, clicked_fn=_open_pathfinder_panel)
-            
-            # ✅ 새 버튼 추가
             ui.Button("Body Data", height=30, style={"color": 0xFFFFFFFF}, clicked_fn=_open_bodydata_panel)
 
             self._btn_edit = ui.Button("Tools * Edit", height=30, style={"color": 0xFFFFFFFF}, clicked_fn=self._toggle_operate_mode)

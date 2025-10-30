@@ -11,8 +11,8 @@ class AmrCard:
         self.m_status = ui.SimpleStringModel("-")
         self.m_lift   = ui.SimpleStringModel("-")
         self.m_rack   = ui.SimpleStringModel("-")
+        self.m_speed  = ui.SimpleStringModel("-")   # ✅ 추가
         self.m_wtype  = ui.SimpleStringModel("-")
-        # 배터리(0~1)
         self.m_batt   = ui.SimpleFloatModel(0.0, min=0.0, max=1.0)
 
         with parent_vstack:
@@ -53,59 +53,49 @@ class AmrCard:
                         self._kv("Status :",      self.m_status, font_size=8)
                         self._kv("Lift Status :", self.m_lift,   font_size=8)
                         self._kv("Rack :",        self.m_rack,   font_size=8)
+                        self._kv("Speed (mm/s) :", self.m_speed, font_size=8)   # ✅ 추가
                         self._kv("Working Type :",self.m_wtype,  font_size=8)
 
-                # ── 배터리 바 (커스텀: 두께/텍스트 완전 제어) ──
-                # 높이는 여기의 height로 정확히 반영됨
+                # ── 배터리 바 ──
                 with ui.ZStack(width=_fill(), height=2):
-                    # 트랙(배경)
                     ui.Rectangle(width=_fill(), height=_fill(),
                                  style={"background_color": 0x803C3C3C})
-
-                    # 채워지는 바
                     with ui.HStack(width=_fill(), height=_fill()):
                         self._batt_fill = ui.Rectangle(
                             height=_fill(),
                             width=ui.Percent(0),
-                            style={"background_color": 0x80800000}  # 초기색(>=70% 가정)
+                            style={"background_color": 0x80800000}
                         )
                         ui.Spacer(width=_fill())
-
-                    # 텍스트(우측 정렬, 소수 0자리 = 정수부만)
                     with ui.HStack(width=_fill(), height=_fill()):
                         ui.Spacer(width=_fill())
                         self._batt_text = ui.Label(
                             "0",
                             style={"color": 0xFFFFFFFF, "font_size": 10}
                         )
-
-                # 값 변경 시 색/폭/텍스트 동기화 + 초기 1회
                 self.m_batt.add_value_changed_fn(self._on_batt_changed)
                 self._on_batt_changed()
 
     # ───────────────────────── helpers ─────────────────────────
     def _fmt_ratio_int(self, v: float) -> str:
-    # 0~1 → 0~100 정수(반올림). % 기호는 붙이지 않음.
         v = max(0.0, min(1.0, float(v)))
         return str(int(round(v * 100.0)))
 
     def _sync_batt_color_and_fill(self):
-        # 색상: <20% 빨강, 20~70% 주황, ≥70% 파랑(기존 상수 유지)
         try:
             v = float(self.m_batt.as_float)
         except Exception:
             v = 0.0
         v = max(0.0, min(1.0, v))
 
-        if   v >= 0.70: col = 0x80800000  # BLUE (ABGR 주석 그대로 유지)
-        elif v >= 0.20: col = 0xFF00AAFF  # ORANGE
-        else:           col = 0xFF0000FF  # RED
+        if   v >= 0.70: col = 0x80800000
+        elif v >= 0.20: col = 0xFF00AAFF
+        else:           col = 0xFF0000FF
 
         try:
             self._batt_fill.set_style({"background_color": col})
         except Exception:
             self._batt_fill.style = {"background_color": col}
-
         try:
             self._batt_fill.width = ui.Percent(int(v * 100))
         except Exception:
@@ -149,6 +139,14 @@ class AmrCard:
         self.m_lift.set_value(_fmt_lift(g("liftStatus", "lift_state")))
         self.m_rack.set_value(str(g("containerCode", "palletCode", "container", "rack") or "-"))
 
+        # ✅ 추가: 속도 표시
+        speed = g("speed") or 0.0
+        try:
+            speed = float(speed)
+        except Exception:
+            speed = 0.0
+        self.m_speed.set_value(f"{speed:.1f}")
+
         w = g("workingType", "missionType", "mission") or g("missionCode")
         if not w:
             w = "Waiting" if bool(g("isWaiting")) else "-"
@@ -159,10 +157,10 @@ class AmrCard:
             batt = float(batt)
         except Exception:
             batt = 0.0
-        if batt > 1.0:  # 0~100 → 0~1 보정
+        if batt > 1.0:
             batt /= 100.0
         batt = max(0.0, min(1.0, batt))
-        self.m_batt.set_value(batt)  # 콜백 통해 색/폭/텍스트 동기화
+        self.m_batt.set_value(batt)
 
     def destroy(self):
         try:

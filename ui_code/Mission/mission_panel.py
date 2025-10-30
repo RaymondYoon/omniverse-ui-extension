@@ -51,7 +51,7 @@ class MissionPanel:
             self._win.visible = True
             return
 
-        self._win = ui.Window("Mission List", width=420, height=560,
+        self._win = ui.Window("Mission List", width=800, height=560,
                               style={"background_color": 0x000000A0})
 
         with self._win.frame:
@@ -170,13 +170,21 @@ class MissionPanel:
     def _on_click_cancel(self, row):
         if not self._on_cancel:
             return
+
         status = (row.get("missionStatus") or "").lower()
+
+        # Reservation 미션 취소 → process 기준
         if status == "reservation":
             self._on_cancel(node_code=row.get("process"))
         else:
-            code = row.get("missionCode")
-            if code:
-                self._on_cancel(mission_code=code)
+            # 일반 미션 취소 → cancelMissionCode 기준
+            cancel_code = row.get("cancelMissionCode") or row.get("missionCode")
+            if cancel_code:
+                print(f"[MissionPanel] Cancel request → cancelMissionCode={cancel_code}")
+                self._on_cancel(cancelMissionCode=cancel_code)
+            else:
+                print("[MissionPanel][WARN] cancelMissionCode 누락으로 Cancel 요청 불가")
+
 
     def _on_click_reset_all(self):
         if self._on_reset_all:
@@ -186,9 +194,11 @@ class MissionPanel:
         lbls = row_widgets["labels"]
         lbls["missionStatus"].text = _t(row.get("missionStatus"))
         lbls["process"].text       = _t(row.get("process"))
-        lbls["missionCode"].text   = _t(row.get("missionCode"))
+        # missionCode 라벨에 cancelMissionCode가 있으면 그것을 우선 표시
+        lbls["missionCode"].text   = _t(row.get("cancelMissionCode") or row.get("missionCode"))
         lbls["amrId"].text         = _t(row.get("amrId"))
         lbls["targetNode"].text    = _t(row.get("targetNode"))
+
 
 
 # --- helpers (module level) ---

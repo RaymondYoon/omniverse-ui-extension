@@ -368,16 +368,14 @@ class AMRControlPanel:
             payload["containerCode"] = cont
             payload["targetNodeCode"] = node
         elif data_type == "MissionCancel":
-            # cancelMissionCode만 전송
             payload["cancelMissionCode"] = mission
 
         # 타입별 허용 필드만 남기기
         ALLOW_BY_TYPE = {
             "ManualMove":     {"dataType", "mapCode", "amrId", "targetNodeCode"},
             "ManualRackMove": {"dataType", "mapCode", "amrId", "containerCode", "targetNodeCode"},
-            "AMRPause":       {"datdaType", "mapCode", "amrId"},
+            "AMRPause":       {"dataType", "mapCode", "amrId"},
             "AMRResume":      {"dataType", "mapCode", "amrId"},
-            # Cancel은 cancelMissionCode만 허용
             "MissionCancel":  {"dataType", "mapCode", "amrId", "cancelMissionCode"},
         }
 

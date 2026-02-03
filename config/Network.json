@@ -1,0 +1,10 @@
+{
+  "baseUrl": "http://172.16.110.67:49000/",
+  "opServerIP": "172.16.110.67",
+  "opServerPort": 49000,
+  "https": false,
+
+  "fleetUrl": "http://172.16.110.199:5000/",
+  "mapCode": "OR",
+  "pathfinderUrl": "https://naver.com"
+}

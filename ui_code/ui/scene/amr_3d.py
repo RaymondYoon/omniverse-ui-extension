@@ -5,6 +5,7 @@ from typing import Optional, Dict, Tuple
 import math, time, re
 from pxr import Sdf
 from pxr import UsdGeom, Gf
+from pxr import Usd
 import omni.usd
 import omni.kit.app as kit_app
 from ui_code.ui.utils.common import _file_uri
@@ -28,8 +29,8 @@ class Amr3D:
         self._OFFSET_V   = 0.0
 
         # 모션 파라미터
-        self._MOVE_SPEED_MM_S = 1000    # mm/s
-        self._YAW_SPEED_DPS   = 180   # deg/s
+        self._MOVE_SPEED_MM_S = 300    # mm/s
+        self._YAW_SPEED_DPS   = 360   # deg/s
         self._YAW_EPS_DEG     = 0.5
         self._POS_EPS_UNITS   = 0.01
 
@@ -51,7 +52,15 @@ class Amr3D:
     # ───────────────── lifecycle ─────────────────
     def init(self, amr_usd_path: str):
         self._ctx   = omni.usd.get_context()
-        self._stage = self._ctx.get_stage() or (self._ctx.new_stage() or self._ctx.get_stage())
+        self._stage = self._ctx.get_stage()
+
+        if self._stage is None:
+            self._ctx.new_stage()
+            self._stage = self._ctx.get_stage()
+
+        if not isinstance(self._stage, Usd.Stage):
+            print("[Amr3D] ERROR: Invalid stage object:", self._stage)
+            return
 
         if not self._stage.HasDefaultPrim():
             world = self._stage.DefinePrim("/World", "Xform")
@@ -72,11 +81,18 @@ class Amr3D:
 
         try:
             xf = UsdGeom.Xformable(self._proto)
-            s_op = xf.AddScaleOp()
-            s_op.Set(Gf.Vec3d(0.1, 0.1, 0.1))   # ← 여기가 핵심
+            s_op = None
+            for op in xf.GetOrderedXformOps():
+                if op.GetOpName() == "xformOp:scale":
+                    s_op = op
+                    break
+            if s_op is None:
+                s_op = xf.AddScaleOp()
+            s_op.Set(Gf.Vec3d(0.1, 0.1, 0.1))
             print("[Amr3D] _AMR_proto scaled down (0.1x)")
         except Exception as e:
             print("[Amr3D] failed to scale proto:", e)
+
 
         # Stage 설정
         up = UsdGeom.GetStageUpAxis(self._stage)
@@ -144,22 +160,50 @@ class Amr3D:
         return f"{base}/AMR_{rid}"
 
     def _ensure_ops(self, prim):
+        
         xf = UsdGeom.Xformable(prim)
-        try: xf.SetResetXformStack(False)
-        except Exception: pass
-        try: xf.ClearXformOpOrder()
-        except Exception: pass
-        for prop in list(prim.GetProperties()):
-            if prop.GetName().startswith("xformOp:"):
-                try: prim.RemoveProperty(prop.GetName())
-                except Exception: pass
-        t_op = xf.AddTranslateOp()
-        r_op = xf.AddRotateXYZOp()
-        s_op = xf.AddScaleOp()
-        xf.SetXformOpOrder([t_op, r_op, s_op])
-        t_op.Set(Gf.Vec3d(0.0, 0.0, 0.0))
-        r_op.Set(Gf.Vec3d(0.0, 0.0, 0.0))
-        s_op.Set(Gf.Vec3d(self._AMR_SCALE, self._AMR_SCALE, self._AMR_SCALE))
+
+        # 1) 현재 스택에서 우리가 쓸 op 찾아오기
+        cur_ops = list(xf.GetOrderedXformOps())
+        t_op = r_op = s_op = None
+
+        for op in cur_ops:
+            t = op.GetOpType()
+            if t == UsdGeom.XformOp.TypeTranslate and t_op is None:
+                t_op = op
+            elif t == UsdGeom.XformOp.TypeRotateXYZ and r_op is None:
+                r_op = op
+            elif t == UsdGeom.XformOp.TypeScale and s_op is None:
+                s_op = op
+
+        created = False
+
+        # 2) 없는 것만 추가 (스택 날리지 않음)
+        if t_op is None:
+            t_op = xf.AddTranslateOp()
+            created = True
+        if r_op is None:
+            r_op = xf.AddRotateXYZOp()
+            created = True
+        if s_op is None:
+            s_op = xf.AddScaleOp()
+            created = True
+
+        # 3) 새로 생성된 경우에만 TRS를 맨 앞에 두고, 나머지는 기존 순서 유지
+        if created:
+            # 최신 스택 다시 가져오기 (방금 추가된 op 포함)
+            all_ops = list(xf.GetOrderedXformOps())
+            others = [op for op in all_ops if op not in (t_op, r_op, s_op)]
+            xf.SetXformOpOrder([t_op, r_op, s_op] + others)
+
+        # 4) 기본값 세팅 (위치/회전은 나중에 update()에서 덮어씀)
+        if t_op:
+            t_op.Set(Gf.Vec3d(0.0, 0.0, 0.0))
+        if r_op:
+            r_op.Set(Gf.Vec3d(0.0, 0.0, 0.0))
+        if s_op:
+            s_op.Set(Gf.Vec3d(self._AMR_SCALE, self._AMR_SCALE, self._AMR_SCALE))
+
         return t_op, r_op, s_op
 
     def _map_to_units(self, it: dict):

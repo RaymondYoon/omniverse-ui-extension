@@ -187,12 +187,6 @@ class DigitalTwinClient:
     # ─────────────────────────────────────────────────────────────────────────────
 
     def _poll_loop(self) -> None:
-        """
-        Mirrors the Unity Task loop:
-          - Every `interval`, fetch ConnectionInfo.
-          - If success, optionally fan-out to AMRInfo/ContainerInfo/WorkingInfo.
-          - Always fetch MissionInfo/ReservationInfo.
-        """
         while not self._stop_event.is_set():
             start_ts = time.time()
 

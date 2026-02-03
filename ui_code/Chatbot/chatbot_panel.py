@@ -1,17 +1,37 @@
+# ui_code/Chatbot/chatbot_panel.py
+# Chat adapter + ChatbotPanel (Omniverse UI) with SSE alert stream.
+# Exports: ChatAdapter, ChatbotPanel
+
 import os
 import json
 import time
 import threading
+from typing import Optional
 import requests
+
 import omni.ui as ui
 import omni.kit.app as kit_app
+
 from ui_code.ui.utils.common import _fill
+
+ALERTS_SHOW_SYS = os.getenv("ALERTS_SHOW_SYS", "0") == "1"  # 1 → show [SSE] logs
+
+# ASCII-only separators to avoid missing glyphs
+SEP = " | "
+
+# Tag mapping for “alarm-like” lines
+ALERT_TAGS = {
+    "battery_low":    "LOW",
+    "status_offline": "OFFLINE",
+    "status_fault":   "FAULT",
+    "job_warn":       "WARN",
+}
 
 
 # ───────────────────── Chat Adapter ─────────────────────
 class ChatAdapter:
     """Adapter for Django chatbot APIs (chat + health)."""
-    def __init__(self, base_url: str | None = None):
+    def __init__(self, base_url: Optional[str] = None):
         self.base_url = (base_url or
                          os.environ.get("DJANGO_CHAT_URL",
                                         "http://127.0.0.1:8000/chatbot/api/chat")).rstrip("/")
@@ -23,8 +43,7 @@ class ChatAdapter:
             if r.status_code == 200:
                 data = r.json()
                 return data.get("text") or data.get("answer") or "WARNING: Empty response."
-            else:
-                return f"HTTP {r.status_code}: {r.text[:300]}"
+            return f"HTTP {r.status_code}: {r.text[:300]}"
         except Exception as e:
             return f"Request failed: {e}"
 
@@ -37,11 +56,11 @@ class ChatAdapter:
 
 # ───────────────────── Chatbot Panel (+ Alerts via SSE) ─────────────────────
 class ChatbotPanel:
-    def __init__(self, adapter: ChatAdapter | None = None, title: str = "ChatBot"):
+    def __init__(self, adapter: Optional[ChatAdapter] = None, title: str = "ChatBot"):
         self._adapter = adapter or ChatAdapter()
         self._title = title
 
-        # UI
+        # UI models
         self._win = None
         self._in_model = ui.SimpleStringModel("")
         self._out_model = ui.SimpleStringModel("")
@@ -51,7 +70,7 @@ class ChatbotPanel:
         self._alerts_url = (os.environ.get("DJANGO_ALERTS_URL")
                             or self._adapter.base_url.replace("/api/chat", "/alerts/stream"))
         self._alive = False
-        self._alerts_thr: threading.Thread | None = None
+        self._alerts_thr: Optional[threading.Thread] = None
 
     # ─────────── UI ───────────
     def show(self):
@@ -60,9 +79,8 @@ class ChatbotPanel:
                                   flags=ui.WINDOW_FLAGS_NO_SCROLLBAR)
             with self._win.frame:
                 with ui.VStack(spacing=8, padding=10, width=_fill(), height=_fill()):
-                    ui.Label("Prompt", style={"color": 0xFFFFFFFF})
-                    ui.StringField(model=self._in_model, multiline=True, height=120,
-                                   style={"color": 0xFFFFFFFF})
+                    ui.Label("Prompt")
+                    ui.StringField(model=self._in_model, multiline=True, height=120)
 
                     with ui.HStack(spacing=8):
                         ui.Button("Send", height=28, clicked_fn=self._on_send)
@@ -71,14 +89,12 @@ class ChatbotPanel:
                         ui.Spacer(width=8)
                         ui.Button("Reconnect Alerts", height=28, clicked_fn=self._restart_alerts)
 
-                    ui.Label("Response", style={"color": 0xFFFFFFFF})
-                    ui.StringField(model=self._out_model, multiline=True, read_only=True,
-                                   height=120, style={"color": 0xFFFFFFFF})
+                    ui.Label("Response")
+                    ui.StringField(model=self._out_model, multiline=True, read_only=True, height=120)
 
                     ui.Separator()
-                    ui.Label("Alerts (Live: battery/status/job)", style={"color": 0xFFFFFFFF})
-                    ui.StringField(model=self._alerts_model, multiline=True, read_only=True,
-                                   height=120, style={"color": 0xFFFFFFFF})
+                    ui.Label("Alerts (Live)")
+                    ui.StringField(model=self._alerts_model, multiline=True, read_only=True, height=120)
 
         self._win.visible = True
         self._win.focus()
@@ -117,19 +133,19 @@ class ChatbotPanel:
     def _listen_alerts(self):
         """SSE client with reconnect + backoff."""
         backoff = 1.0
-        self._append_alert_line(f"[SSE] connecting to {self._alerts_url}")
+        self._sys_note(f"connecting to {self._alerts_url}")
         while self._alive:
             try:
-                # connect timeout 5s, read timeout 70s (주기적 핑으로 갱신)
+                # connect timeout 5s, read timeout 70s (server heartbeats keep it alive)
                 with requests.get(self._alerts_url, stream=True, timeout=(5, 70)) as r:
                     if r.status_code != 200:
-                        self._append_alert_line(f"[SSE] HTTP {r.status_code}: {self._alerts_url}")
+                        self._sys_note(f"HTTP {r.status_code}: {self._alerts_url}")
                         time.sleep(backoff)
                         backoff = min(backoff * 2.0, 15.0)
                         continue
 
-                    self._append_alert_line("[SSE] connected")
-                    backoff = 1.0  # reset on success
+                    self._sys_note("connected")
+                    backoff = 1.0
 
                     event_name = "message"
                     data_buf = []
@@ -156,36 +172,77 @@ class ChatbotPanel:
                         if line.startswith("data: "):
                             data_buf.append(line[6:])
                             continue
-                        # ':' ping 등은 무시
+                        # ":" lines (e.g., :ping) are comments → ignore
             except Exception as e:
                 if not self._alive:
                     break
-                self._append_alert_line(f"[SSE] reconnect due to error: {e}")
+                self._sys_note(f"reconnect: {e}")
                 time.sleep(backoff)
                 backoff = min(backoff * 2.0, 15.0)
 
+    # ─────────── Formatting & UI append ───────────
     def _handle_sse_event(self, event_name: str, payload: str):
         try:
             obj = json.loads(payload)
         except Exception:
-            self._append_alert_line(f"[{event_name}] {payload}")
+            self._push_chat_line(f"[INFO]{SEP}{self._now_hms()}{SEP}{event_name}{SEP}{payload}")
             return
 
-        title = obj.get("title") or event_name
-        msg = obj.get("message") or ""
-        rid = obj.get("robotId")
-        ts = obj.get("ts") or ""
-        line = f"[{event_name}] {title} — {msg}" + (f" (AMR {rid})" if rid else "") + (f" @ {ts}" if ts else "")
-        self._append_alert_line(line)
+        label_map = {
+            "battery_low":    "Battery Low",
+            "status_offline": "Offline",
+            "status_fault":   "Fault",
+            "job_warn":       "Job Warning",
+        }
+        label = label_map.get(event_name, event_name)
+        tag = ALERT_TAGS.get(event_name, "INFO")
 
-    def _append_alert_line(self, line: str):
-        """UI 업데이트는 메인 쓰레드에서: post_update 사용"""
+        rid = obj.get("robotId") or "-"
+        msg = obj.get("message") or ""
+        t_local = self._format_local_time(obj.get("ts"))
+
+        # ASCII-only, “alarm-like” line
+        # [TAG] HH:MM:SS | AMR 152 | Offline | status=2 (offline)
+        line = f"[{tag}]{SEP}{t_local}{SEP}AMR {rid}{SEP}{label}{SEP}{msg}"
+        self._push_chat_line(line)
+
+    def _push_chat_line(self, line: str):
+        """Prepend a chat-like alert line. Safe on Kit main thread via next_update."""
         app = kit_app.get_app()
         def _do():
             old = self._alerts_model.as_string or ""
-            self._alerts_model.set_value((line + "\n") + old)
-        app.post_update(_do)
+            self._alerts_model.set_value((line + "\n") + old)  # prepend
+        try:
+            app.next_update.add_task(_do)  # Kit 105+ safe
+        except Exception:
+            try:
+                _do()
+            except Exception:
+                pass
 
-    # ─────────── lifecycle (옵션) ───────────
-    def destroy(self):
-        self._stop_alerts()
+    def _sys_note(self, text: str):
+        if not ALERTS_SHOW_SYS:
+            return
+        self._push_chat_line(f"[SSE]{SEP}{text}")
+
+    @staticmethod
+    def _format_local_time(ts: Optional[str]) -> str:
+        if not ts:
+            return "now"
+        try:
+            t = ts.replace("Z", "+00:00")  # ISO Z → +00:00
+            from datetime import datetime
+            dt = datetime.fromisoformat(t)
+            if dt.tzinfo is not None:
+                dt = dt.astimezone()
+            return dt.strftime("%H:%M:%S")
+        except Exception:
+            return ts
+
+    @staticmethod
+    def _now_hms() -> str:
+        from datetime import datetime
+        return datetime.now().strftime("%H:%M:%S")
+
+
+__all__ = ["ChatAdapter", "ChatbotPanel"]

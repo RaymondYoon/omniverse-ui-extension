@@ -8,13 +8,14 @@ import urllib.error
 import time
 from collections import deque  # UI 작업 큐
 import inspect
-
+from omni.kit.mainwindow import get_main_window
 import carb
 import omni.ext
 import omni.kit.app as kit_app
 import omni.usd
 from omni.usd import StageEventType
 from omni.ui import SimpleStringModel
+import omni.ui as gui
 
 from .client import DigitalTwinClient
 from .main import UiLayoutBase
@@ -190,28 +191,35 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
         else:
             print("[Platform.ui][WARN] 'fleet_base_url'이 비어 있습니다. Fleet 핑을 건너뜁니다.")
 
-        # 6) 라인카 스포너
-        self._line_car_1 = LineCarSpawner(
-            usd_path=r"C:\BODY.usd",
-            parent_path="/World/LineCars",
-            start_x=-2200,
-            end_x=9150,
-            lane_y=1120,
-            count=20,
-        )
-        self._line_car_1.start()
+        # # # 6) 라인카 스포너
+        # self._line_car_1 = LineCarSpawner(
+        #     usd_path=r"C:\BODY.usd",
+        #     parent_path="/World/LineCars",
+        #     start_x=-1700,
+        #     end_x=9650,
+        #     lane_y=1120,
+        #     count=20,
+        # )
+        # self._line_car_1.start()
 
-        self._line_car_2 = LineCarSpawner(
-            usd_path=r"C:\BODY.usd",
-            parent_path="/World/LineCars2",
-            proto_path="/World/_BodyProto2",
-            start_x=10950,
-            end_x=250,
-            lane_y=2425,
-            yaw_deg=-90,
-            count=19,
-        )
-        self._line_car_2.start()
+        # self._line_car_2 = LineCarSpawner(
+        #     usd_path=r"C:\BODY.usd",
+        #     parent_path="/World/LineCars2",
+        #     proto_path="/World/_BodyProto2",
+        #     start_x=10250,
+        #     end_x=-500,
+        #     lane_y=2425,
+        #     yaw_deg=-90,
+        #     count=19,
+        # )
+        # self._line_car_2.start()
+
+        ## # 7) 메인 메뉴바 ON/OFF
+        main_window = get_main_window()
+        if main_window:
+            menu_bar = main_window.get_main_menu_bar()
+            if menu_bar:
+                menu_bar.visible = True   # 상단 메뉴바 전체 숨김
 
     def on_shutdown(self):
         try:
@@ -252,13 +260,6 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
 
     # ───────────────────── config loader ───────────────────────
     def _load_config(self) -> dict:
-        """
-        platform_ext/config/Network.json 에서 설정을 읽어온다.
-        - OP 서버 URL: baseUrl 또는 opServerIP/opServerPort/https 조합
-        - Fleet 서버 URL: fleetUrl 또는 fleetServerIP/fleetServerPort/fleetHttps 조합
-        - mapCode: mapCode
-        하드코딩된 기본값은 넣지 않는다. (없으면 빈 값 반환)
-        """
         def _normalize(u: str) -> str:
             if not u:
                 return ""
@@ -303,23 +304,11 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
         # OP URL
         op_url = (
             raw.get("baseUrl")
-            or raw.get("opBaseUrl")
-            or _url_from_ip_port(
-                raw.get("opServerIP") or raw.get("opIp"),
-                raw.get("opServerPort") or raw.get("opPort"),
-                bool(raw.get("https") or raw.get("opHttps"))
-            )
         )
 
         # Fleet URL
         fleet_url = (
             raw.get("fleetUrl")
-            or raw.get("fleetBaseUrl")
-            or _url_from_ip_port(
-                raw.get("fleetServerIP") or raw.get("fleetIp"),
-                raw.get("fleetServerPort") or raw.get("fleetPort"),
-                bool(raw.get("fleetHttps"))
-            )
         )
 
         map_code = raw.get("mapCode")
@@ -551,6 +540,8 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
             if self._mission_panel:
                 self._post_to_ui(self._mission_panel.refresh)
 
+            self._cleanup_finished_missions(items)
+
         # ───────── MissionInfo ─────────
         elif data_type == "MissionInfo":
             missions = data if isinstance(data, list) else []
@@ -731,7 +722,7 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
             rids = [str(r) for r in rids if r is not None]
         amr_id = rids[0] if len(rids) == 1 else "-"
         if amr_id == "-":
-            amr_id = _first_nonempty(v, "amrId", "robotId", "rid", "robot", "agvId", "vehicleId", default="-")
+            amr_id = _first_nonempty(v, "amrId", "robotId", "rid", default="-")
 
         proc = _first_nonempty(
             v,
@@ -803,17 +794,31 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
             "targetNode": target,
         }
 
+    # def _mission_snapshot(self):
+    #     work_rows = []
+    #     wait_rows = []
+    #     for r in (self._working_rows_latest or []):
+    #         st = (r.get("missionStatus") or "").strip().lower()
+    #         if st == "working":
+    #             work_rows.append(r)
+    #         elif st == "waiting":
+    #             wait_rows.append(r)
+    #     reserved_rows = list(self._missions_rows_latest or []) + list(self._reserv_rows_latest or [])
+    #     return {"working": work_rows, "waiting": wait_rows, "reserved": reserved_rows}
+
     def _mission_snapshot(self):
+        # Working만 골라 담기
         work_rows = []
-        wait_rows = []
         for r in (self._working_rows_latest or []):
             st = (r.get("missionStatus") or "").strip().lower()
             if st == "working":
                 work_rows.append(r)
-            else:
-                wait_rows.append(r)
+
+        # Reservation은 기존처럼 유지
         reserved_rows = list(self._missions_rows_latest or []) + list(self._reserv_rows_latest or [])
-        return {"working": work_rows, "waiting": wait_rows, "reserved": reserved_rows}
+
+        # Waiting은 아예 비워서 UI에 안 보이게
+        return {"working": work_rows, "waiting": [], "reserved": reserved_rows}
 
     def _open_mission_panel(self):
         def _open():
@@ -918,26 +923,37 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
             if getattr(self, "_mission_panel", None):
                 self._post_to_ui(self._mission_panel.refresh)
 
-    def _mission_cancel(self, mission_code=None, node_code=None):
-        payload = {"dataType": "MissionCancel"}
-        if self._map_code:
-            payload["mapCode"] = self._map_code
-        if mission_code:
-            payload["cancelMissionCode"] = mission_code
-        if node_code:
-            payload["cancelNodeCode"] = node_code
+    def _mission_cancel(self, node_code=None, cancelMissionCode=None):
+        """Cancel 버튼에서 전달받은 Mission 취소 처리"""
+        print(f"[Platform.ui] mission cancel called → node_code={node_code}, cancelMissionCode={cancelMissionCode}")
 
-        ok = self._send_to_client("MissionCancel", payload)
-        self._optimistic_remove_post_cancel(mission_code=mission_code, node_code=node_code)
-        if not ok:
-            pass
+        # CancelMissionCode가 있는 경우 → 디지털트윈 API로 바로 전송
+        if cancelMissionCode:
+            try:
+                payload = {
+                    "dataType": "MissionCancel",
+                    "mapCode": self._map_code,
+                    "amrId": "512",  # ← AMR ID는 상황에 맞게 지정
+                    "cancelMissionCode": cancelMissionCode,
+                }
+                print("[Platform.ui] Sending cancel payload →", payload)
+                if self._client:
+                    self._client.post_digital_twin(payload)
+            except Exception as e:
+                print("[Platform.ui][ERROR] Cancel dispatch failed:", e)
+            return
+
+        # node_code 기반으로 취소할 경우 (예약 취소 등)
+        if node_code:
+            print(f"[Platform.ui] Reservation cancel requested for node {node_code}")
+            # 여기도 필요 시 추가 API 호출 처리
 
     def _mission_reset_all(self):
         snap = self._mission_snapshot()
         for row in (snap.get("working") or []) + (snap.get("waiting") or []):
             code = row.get("missionCode")
             if code and code != "-":
-                self._mission_cancel(mission_code=code)
+                self._mission_cancel(cancelMissionCode=code)
 
         for row in (snap.get("reserved") or []):
             node = row.get("process")
@@ -957,3 +973,30 @@ class PlatformUiExtension(UiLayoutBase, omni.ext.IExt):
         self._post_to_ui(self._set_model, "m_mission_working",  f"Working: {w}")
         self._post_to_ui(self._set_model, "m_mission_waiting",  f"Waiting: {wait}")
         self._post_to_ui(self._set_model, "m_mission_reserved", f"Reserved: {reserved}")
+
+    def _cleanup_finished_missions(self, current_working_items):
+        """서버에 존재하지 않는 오래된 Waiting 미션을 제거"""
+        try:
+            current_codes = set()
+            for it in current_working_items or []:
+                code = str(it.get("Key") or it.get("missionCode") or "").strip()
+                if code:
+                    current_codes.add(code)
+
+            before = len(self._working_rows_latest or [])
+            keep = []
+            for row in self._working_rows_latest or []:
+                code = str(row.get("missionCode") or "").strip()
+                status = (row.get("missionStatus") or "").lower()
+                # Waiting 상태인데 서버 응답에 없는 미션이면 제거
+                if status == "waiting" and code not in current_codes:
+                    print(f"[MissionCleanup] Removing stale waiting mission: {code}")
+                    continue
+                keep.append(row)
+
+            self._working_rows_latest = keep
+
+            if len(keep) != before and getattr(self, "_mission_panel", None):
+                self._post_to_ui(self._mission_panel.refresh)
+        except Exception as e:
+            print("[MissionCleanup][ERROR]", e)

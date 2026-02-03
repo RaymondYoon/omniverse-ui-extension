@@ -11,7 +11,7 @@ class AmrCard:
         self.m_status = ui.SimpleStringModel("-")
         self.m_lift   = ui.SimpleStringModel("-")
         self.m_rack   = ui.SimpleStringModel("-")
-        self.m_speed  = ui.SimpleStringModel("-")   # ✅ 추가
+        self.m_speed  = ui.SimpleStringModel("-")
         self.m_wtype  = ui.SimpleStringModel("-")
         self.m_batt   = ui.SimpleFloatModel(0.0, min=0.0, max=1.0)
 
@@ -53,7 +53,7 @@ class AmrCard:
                         self._kv("Status :",      self.m_status, font_size=8)
                         self._kv("Lift Status :", self.m_lift,   font_size=8)
                         self._kv("Rack :",        self.m_rack,   font_size=8)
-                        self._kv("Speed (mm/s) :", self.m_speed, font_size=8)   # ✅ 추가
+                        # self._kv("Speed (mm/s) :", self.m_speed, font_size=8)   #  추가
                         self._kv("Working Type :",self.m_wtype,  font_size=8)
 
                 # ── 배터리 바 ──
@@ -138,15 +138,6 @@ class AmrCard:
         self.m_status.set_value(_fmt_status(g("status", "robotStatus", "state")))
         self.m_lift.set_value(_fmt_lift(g("liftStatus", "lift_state")))
         self.m_rack.set_value(str(g("containerCode", "palletCode", "container", "rack") or "-"))
-
-        # ✅ 추가: 속도 표시
-        speed = g("speed") or 0.0
-        try:
-            speed = float(speed)
-        except Exception:
-            speed = 0.0
-        self.m_speed.set_value(f"{speed:.1f}")
-
         w = g("workingType", "missionType", "mission") or g("missionCode")
         if not w:
             w = "Waiting" if bool(g("isWaiting")) else "-"

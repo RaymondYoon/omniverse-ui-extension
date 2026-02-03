@@ -31,7 +31,7 @@ class AMRControlPanel:
     def __init__(
         self,
         client: Optional[object] = None,
-        map_code: str = "GBFTT",
+        map_code: str = "E_Comp",
         set_selection_passthrough=None,
     ):
         self._client = client
@@ -370,7 +370,7 @@ class AMRControlPanel:
         elif data_type == "MissionCancel":
             payload["cancelMissionCode"] = mission
 
-        # 타입별 허용 필드만 남기기
+        # 타입별 허용 필드만 남기기 하이 ㅋ 
         ALLOW_BY_TYPE = {
             "ManualMove":     {"dataType", "mapCode", "amrId", "targetNodeCode"},
             "ManualRackMove": {"dataType", "mapCode", "amrId", "containerCode", "targetNodeCode"},

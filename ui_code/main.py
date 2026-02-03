@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any
 import omni.ui as ui
 from omni.ui import dock_window_in_window, DockPosition
 import omni.usd
+import carb
 
 from ui_code.ui.utils.common import _fill
 from ui_code.ui.components.amr_card import AmrCard
@@ -35,16 +36,34 @@ class UiLayoutBase:
                 w.visible = False
 
     def _text(self, model: ui.SimpleStringModel, style: dict):
-        return ui.StringField(model=model, read_only=True, style={"font_size": 10, "color": 0xFFFFFFFF}, width=_fill())
+        return ui.StringField(
+            model=model,
+            read_only=True,
+            style={"font_size": 10, "color": 0xFFFFFFFF},
+            width=_fill(),
+        )
 
     def _section_header_with_button(self, title: str, on_click, btn_text: str = "+"):
         with ui.HStack(spacing=6, width=_fill(), height=24):
             ui.Label(title, style={"font_size": 14, "color": 0xFFFFFFFF}, width=_fill())
-            ui.Button(btn_text, width=24, height=22, style={"color": 0xFFFFFFFF}, clicked_fn=on_click)
+            ui.Button(
+                btn_text,
+                width=24,
+                height=22,
+                style={"color": 0xFFFFFFFF},
+                clicked_fn=on_click,
+            )
 
     # ───────────────────────── lifecycle ───────────────────────
     def on_startup(self, ext_id):
         print("[Platform.ui.main] UI startup")
+
+        # ───────── 상단 Menubar / Viewport Menubar 제거 ─────────
+        settings = carb.settings.get_settings()
+        # File / Edit / Create / Window / Rendering / Help
+        settings.set("/app/ui/menubar/enabled", False)
+        # LIVE / CACHE / HUB NOT DETECTED
+        settings.set("/app/viewport/menubar/enabled", False)
 
         # 외부 패널
         self._container_panel = ContainerPanel()
@@ -77,18 +96,16 @@ class UiLayoutBase:
         self.m_mission_reserved   = ui.SimpleStringModel("Reserved: 0")
         self.m_mission_inprogress = ui.SimpleStringModel("In Progress: 0")
 
-        self._amr_latest: Dict[str, Dict[str, Any]] = {}            # ← 추가
+        self._amr_latest: Dict[str, Dict[str, Any]] = {}
         self._amr_panel.set_data_resolver(lambda rid: self._amr_latest.get(str(rid)))
 
         # 3D 동기화 엔진
         self._amr3d = Amr3D()
         self._amr3d.init("C:/omniverse_exts/AMR.usd")
 
-        # 지금은 /World/AMRs(루트)만 사용. t_floor 앵커는 사용하지 않음.
-        # 필요해지면 아래 한 줄을 활성화:
-        # self._amr3d.set_anchor("/World/t_floor")
+        # self._amr3d.set_anchor("/World/t_floor")  # 필요 시 사용
 
-        # 회전/축 보정(필요 시 조정)
+        # 회전/축 보정
         self._amr3d.set_mode("snap")
         self._amr3d.set_config(tilt_x=90, yaw_sign=+1, yaw_offset=0)
 
@@ -106,7 +123,7 @@ class UiLayoutBase:
 
     # 상태 줄
     def _draw_status_line(self, label: str, is_connected: bool):
-        glyph = "●" if is_connected else "?"
+        glyph = "O" if is_connected else "?"
         color = 0xFF00FF00 if is_connected else 0xFF0000FF  # ABGR
         with ui.HStack(width=_fill()):
             ui.Label(label, width=150, style={"color": 0xFFFFFFFF})
@@ -163,22 +180,21 @@ class UiLayoutBase:
         if not v:
             return
 
-        # 새 텍스트에서 AMR ID 추출: "10002, noError-charging" -> "10002"
+        # 새 텍스트에서 AMR ID 추출
         def _rid_from_text(s: str) -> str:
             s = (s or "").strip()
-            # "[Error] 10002, ..." 형태도 대비
             if s.startswith("[Error]"):
                 s = s[len("[Error]"):].strip()
             return s.split(",", 1)[0].strip()
 
         new_rid = _rid_from_text(text)
 
-        # 0) 같은 AMR ID가 이미 화면에 있으면 그 줄만 갱신하고 끝
+        # 0) 같은 AMR ID가 이미 화면에 있으면 그 줄만 갱신
         for model in self._error_models:
-            cur = model.as_string  # "[Error] 10002, ...."
+            cur = model.as_string
             cur_rid = _rid_from_text(cur)
             if cur_rid == new_rid:
-                model.set_value(f"[Error] {text}")  # 같은 줄 덮어쓰기
+                model.set_value(f"[Error] {text}")
                 return
 
         # 1) 동일한 전체 텍스트가 이미 있으면 무시
@@ -191,17 +207,24 @@ class UiLayoutBase:
             model = ui.SimpleStringModel(f"[Error] {text}")
             self._error_models.append(model)
             with self._error_vstack:
-                ui.StringField(model=model, read_only=True, style={"font_size": 10, "color": 0xFFFFFFFF}, width=_fill())
+                ui.StringField(
+                    model=model,
+                    read_only=True,
+                    style={"font_size": 10, "color": 0xFFFFFFFF},
+                    width=_fill(),
+                )
             return
 
-        # 3) 5줄 이미 꽉 찼다면 위로 한 칸씩 밀고 마지막 줄을 새 값으로 교체
+        # 3) 5줄 이미 꽉 찼다면 위로 한 칸씩 밀고 마지막 줄 교체
         for i in range(4):
             self._error_models[i].set_value(self._error_models[i + 1].as_string)
         self._error_models[-1].set_value(f"[Error] {text}")
 
     # ────────────────────── AMR 카드 동기화/플레이스홀더 ─────────────────────
     def _amr_id_of(self, it: dict, idx: int) -> str:
-        return str(it.get("robotId") or it.get("amrId") or it.get("id") or it.get("name") or f"AMR-{idx+1}")
+        return str(
+            it.get("robotId")
+        )
 
     def _show_placeholder_amr_cards(self, count: int = 4):
         if not hasattr(self, "_amr_list_stack"):
@@ -211,7 +234,9 @@ class UiLayoutBase:
             if pid in getattr(self, "_amr_cards", {}):
                 continue
             card = AmrCard(self._amr_list_stack, amr_id=f"AMR {i+1}", on_plus=self._open_amr_panel)
-            card.update({"status": None, "liftStatus": None, "containerCode": None, "batteryLevel": 0})
+            card.update(
+                {"status": None, "liftStatus": None, "containerCode": None, "batteryLevel": 0}
+            )
             self._amr_cards[pid] = card
 
     def _sync_amr_cards(self, items):
@@ -221,7 +246,6 @@ class UiLayoutBase:
         arr = items if isinstance(items, list) else []
         seen = set()
 
-        # 최신 데이터 저장소가 없으면 만들어 둠(안전)
         if not hasattr(self, "_amr_latest"):
             self._amr_latest = {}
 
@@ -231,7 +255,7 @@ class UiLayoutBase:
 
             # 최신 데이터 저장
             try:
-                self._amr_latest[amr_id] = dict(it)  # (copy해서 보관 추천)
+                self._amr_latest[amr_id] = dict(it)
             except Exception:
                 self._amr_latest[amr_id] = it
 
@@ -241,10 +265,10 @@ class UiLayoutBase:
                 self._amr_cards[amr_id] = card
             card.update(it)
 
-            # Details가 이 AMR을 보고 있으면 즉시 반영
+            # Details 패널이 이 AMR을 보고 있으면 즉시 반영
             try:
                 if getattr(self, "_amr_panel", None) and \
-                self._amr_panel.get_selected_id() == str(amr_id):
+                        self._amr_panel.get_selected_id() == str(amr_id):
                     self._amr_panel.update(self._amr_latest[amr_id])
             except Exception:
                 pass
@@ -262,7 +286,6 @@ class UiLayoutBase:
                 if not amr_id.startswith("__placeholder_") and amr_id not in seen:
                     self._amr_cards[amr_id].destroy()
                     del self._amr_cards[amr_id]
-                    # 사라진 AMR은 저장소에서도 제거
                     try:
                         del self._amr_latest[amr_id]
                     except Exception:
@@ -280,4 +303,3 @@ class UiLayoutBase:
                     self._amr_scroll.scroll_y = 0.0
             except Exception as e:
                 print("[AMR] refresh failed:", e)
-
